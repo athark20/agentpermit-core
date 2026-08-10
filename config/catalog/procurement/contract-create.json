@@ -1,0 +1,40 @@
+{
+  "actionId": "Contract.Create",
+  "displayName": "Create a supplier contract",
+  "domain": "Procurement",
+  "risk": "Legal",
+  "consequenceTier": "HIGH",
+  "targetSystem": "PROCUREMENT",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "counterparty",
+      "value",
+      "currency",
+      "term"
+    ],
+    "properties": {
+      "counterparty": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "term": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 60
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

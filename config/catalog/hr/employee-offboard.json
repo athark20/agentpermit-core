@@ -1,0 +1,34 @@
+{
+  "actionId": "Employee.Offboard",
+  "displayName": "Off-board / deprovision a leaver",
+  "domain": "HR",
+  "risk": "Identity",
+  "consequenceTier": "HIGH",
+  "targetSystem": "HRIS",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "employeeId",
+      "lastDay",
+      "reason"
+    ],
+    "properties": {
+      "employeeId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "lastDay": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

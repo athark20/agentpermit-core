@@ -1,0 +1,28 @@
+{
+  "actionId": "Card.Block",
+  "displayName": "Block a payment card",
+  "domain": "Banking",
+  "risk": "Operational",
+  "consequenceTier": "HIGH",
+  "targetSystem": "BANKING_CORE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "cardId",
+      "reason"
+    ],
+    "properties": {
+      "cardId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

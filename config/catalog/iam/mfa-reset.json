@@ -1,0 +1,28 @@
+{
+  "actionId": "MFA.Reset",
+  "displayName": "Reset a user multi-factor authentication",
+  "domain": "IdentityAccess",
+  "risk": "Identity",
+  "consequenceTier": "HIGH",
+  "targetSystem": "IAM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "userPrincipalName",
+      "reason"
+    ],
+    "properties": {
+      "userPrincipalName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

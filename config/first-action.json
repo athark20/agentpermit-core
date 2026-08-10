@@ -1,0 +1,39 @@
+{
+  "actionId": "Refund.Issue",
+  "displayName": "Issue Refund",
+  "domain": "CustomerService",
+  "risk": "Financial",
+  "consequenceTier": "HIGH",
+  "targetSystem": "REFUND_SIMULATOR",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "customerId",
+      "amount",
+      "currency",
+      "reason"
+    ],
+    "properties": {
+      "customerId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 1000000
+      },
+      "currency": {
+        "type": "string",
+        "const": "AED"
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 1000
+      }
+    }
+  }
+}

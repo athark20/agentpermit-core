@@ -1,0 +1,40 @@
+{
+  "actionId": "Fee.Waive",
+  "displayName": "Waive a fee or charge",
+  "domain": "CustomerService",
+  "risk": "Financial",
+  "consequenceTier": "MEDIUM",
+  "targetSystem": "CRM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "accountId",
+      "feeType",
+      "amount",
+      "currency"
+    ],
+    "properties": {
+      "accountId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "feeType": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 60
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 50000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentpermit.local/schemas/policy-decision.schema.json",
+  "title": "AgentPermit Policy Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision",
+    "policyCode",
+    "policyVersion",
+    "evaluatedAtUtc"
+  ],
+  "properties": {
+    "decision": {
+      "enum": [
+        "ALLOW",
+        "DENY",
+        "REQUIRE_APPROVAL"
+      ]
+    },
+    "policyCode": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "policyVersion": {
+      "type": "string",
+      "maxLength": 50
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2000
+    },
+    "requiredApproverRoles": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 200
+      }
+    },
+    "evaluatedAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

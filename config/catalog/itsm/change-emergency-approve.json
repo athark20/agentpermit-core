@@ -1,0 +1,28 @@
+{
+  "actionId": "Change.Emergency.Approve",
+  "displayName": "Approve an emergency change",
+  "domain": "ITSM",
+  "risk": "Operational",
+  "consequenceTier": "HIGH",
+  "targetSystem": "ITSM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "changeId",
+      "summary"
+    ],
+    "properties": {
+      "changeId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

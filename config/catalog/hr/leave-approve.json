@@ -1,0 +1,34 @@
+{
+  "actionId": "LeaveRequest.Approve",
+  "displayName": "Approve a leave request",
+  "domain": "HR",
+  "risk": "Operational",
+  "consequenceTier": "LOW",
+  "targetSystem": "HRIS",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "employeeId",
+      "fromDate",
+      "toDate"
+    ],
+    "properties": {
+      "employeeId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "fromDate": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20
+      },
+      "toDate": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20
+      }
+    }
+  }
+}

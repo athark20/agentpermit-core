@@ -1,0 +1,40 @@
+{
+  "actionId": "Discount.Approve",
+  "displayName": "Approve a non-standard discount",
+  "domain": "Sales",
+  "risk": "Financial",
+  "consequenceTier": "MEDIUM",
+  "targetSystem": "CRM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "opportunityId",
+      "discountPercent",
+      "amount",
+      "currency"
+    ],
+    "properties": {
+      "opportunityId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "discountPercent": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 100
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

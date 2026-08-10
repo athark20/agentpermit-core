@@ -1,0 +1,33 @@
+{
+  "actionId": "Data.Delete.Bulk",
+  "displayName": "Delete records in bulk",
+  "domain": "DataOps",
+  "risk": "Data",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "DATA",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "dataset",
+      "recordCount",
+      "reason"
+    ],
+    "properties": {
+      "dataset": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "recordCount": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

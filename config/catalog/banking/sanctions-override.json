@@ -1,0 +1,34 @@
+{
+  "actionId": "SanctionsScreening.Override",
+  "displayName": "Override a sanctions / watchlist screening hit",
+  "domain": "Banking",
+  "risk": "Compliance",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "BANKING_CORE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "caseId",
+      "customerId",
+      "justification"
+    ],
+    "properties": {
+      "caseId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "customerId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "justification": {
+        "type": "string",
+        "minLength": 10,
+        "maxLength": 1000
+      }
+    }
+  }
+}

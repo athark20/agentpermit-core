@@ -1,0 +1,34 @@
+{
+  "actionId": "Contract.Renewal.Approve",
+  "displayName": "Approve a contract renewal",
+  "domain": "Sales",
+  "risk": "Financial",
+  "consequenceTier": "MEDIUM",
+  "targetSystem": "CRM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "contractId",
+      "value",
+      "currency"
+    ],
+    "properties": {
+      "contractId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

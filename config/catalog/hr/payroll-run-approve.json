@@ -1,0 +1,38 @@
+{
+  "actionId": "Payroll.Run.Approve",
+  "displayName": "Approve a payroll run",
+  "domain": "HR",
+  "risk": "Financial",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "HRIS",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "runId",
+      "totalAmount",
+      "currency",
+      "headcount"
+    ],
+    "properties": {
+      "runId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "headcount": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "totalAmount": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

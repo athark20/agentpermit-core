@@ -1,0 +1,18 @@
+{
+  "actionId": "Invoice.Approve",
+  "displayName": "Approve an invoice for payment",
+  "domain": "Finance",
+  "risk": "Financial",
+  "consequenceTier": "MEDIUM",
+  "targetSystem": "FINANCE_AP",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["invoiceNumber", "approver"],
+    "properties": {
+      "invoiceNumber": { "type": "string", "minLength": 1, "maxLength": 30 },
+      "approver": { "type": "string", "minLength": 1, "maxLength": 100 },
+      "note": { "type": "string", "maxLength": 500 }
+    }
+  }
+}

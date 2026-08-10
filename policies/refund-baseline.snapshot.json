@@ -1,0 +1,44 @@
+{
+  "policyCode": "Refund.Issue.AmountThreshold",
+  "version": "2.0.0",
+  "hash": null,
+  "publisher": "seed",
+  "defaultDecision": "DENY",
+  "rules": [
+    {
+      "id": "refund-allow-below-250",
+      "name": "Auto-approve small refunds",
+      "priority": 10,
+      "actionId": "Refund.Issue",
+      "conditions": [
+        { "field": "amount", "operator": "lessThan", "value": 250 }
+      ],
+      "decision": "ALLOW",
+      "reason": "Amount is below the 250 auto-approve threshold."
+    },
+    {
+      "id": "refund-approval-250-2000",
+      "name": "Approval band",
+      "priority": 20,
+      "actionId": "Refund.Issue",
+      "conditions": [
+        { "field": "amount", "operator": "greaterThanOrEqual", "value": 250 },
+        { "field": "amount", "operator": "lessThanOrEqual", "value": 2000 }
+      ],
+      "decision": "REQUIRE_APPROVAL",
+      "approverRoles": [ "RefundApprover" ],
+      "reason": "Amount is within the approval band (250-2000); approval required."
+    },
+    {
+      "id": "refund-deny-above-2000",
+      "name": "Deny large refunds",
+      "priority": 30,
+      "actionId": "Refund.Issue",
+      "conditions": [
+        { "field": "amount", "operator": "greaterThan", "value": 2000 }
+      ],
+      "decision": "DENY",
+      "reason": "Amount exceeds the 2000 maximum; denied."
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentpermit.local/schemas/action-request.schema.json",
+  "title": "AgentPermit Action Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "actionId",
+    "agentId",
+    "parameters",
+    "correlationId",
+    "idempotencyKey"
+  ],
+  "properties": {
+    "actionId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 200
+    },
+    "agentId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "rootAgentId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 200
+    },
+    "initiatingUserId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 200
+    },
+    "correlationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 200
+    },
+    "parameters": {
+      "type": "object"
+    },
+    "businessContext": {
+      "type": "object"
+    },
+    "delegationChain": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agentId",
+          "sequence"
+        ],
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}

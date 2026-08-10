@@ -1,0 +1,28 @@
+{
+  "actionId": "Permit.Issue",
+  "displayName": "Issue a permit or licence",
+  "domain": "Government",
+  "risk": "Compliance",
+  "consequenceTier": "HIGH",
+  "targetSystem": "GOV",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "applicationId",
+      "permitType"
+    ],
+    "properties": {
+      "applicationId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "permitType": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "actionId": "DSAR.Fulfil",
+  "displayName": "Fulfil a data-subject access / PDPL request",
+  "domain": "DataOps",
+  "risk": "Compliance",
+  "consequenceTier": "HIGH",
+  "targetSystem": "DATA",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "requestId",
+      "subjectId",
+      "action"
+    ],
+    "properties": {
+      "requestId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "subjectId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "action": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40
+      }
+    }
+  }
+}

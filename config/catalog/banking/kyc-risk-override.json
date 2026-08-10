@@ -1,0 +1,34 @@
+{
+  "actionId": "KYC.RiskRating.Override",
+  "displayName": "Override a customer AML risk rating",
+  "domain": "Banking",
+  "risk": "Compliance",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "BANKING_CORE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "customerId",
+      "newRating",
+      "justification"
+    ],
+    "properties": {
+      "customerId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "newRating": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20
+      },
+      "justification": {
+        "type": "string",
+        "minLength": 10,
+        "maxLength": 1000
+      }
+    }
+  }
+}

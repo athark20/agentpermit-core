@@ -1,0 +1,33 @@
+{
+  "actionId": "Data.Export.Bulk",
+  "displayName": "Export a bulk data set",
+  "domain": "DataOps",
+  "risk": "Data",
+  "consequenceTier": "HIGH",
+  "targetSystem": "DATA",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "dataset",
+      "recordCount",
+      "destination"
+    ],
+    "properties": {
+      "dataset": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "recordCount": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "destination": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    }
+  }
+}

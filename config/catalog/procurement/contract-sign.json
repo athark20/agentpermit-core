@@ -1,0 +1,40 @@
+{
+  "actionId": "Contract.Sign",
+  "displayName": "Execute / e-sign a contract",
+  "domain": "Procurement",
+  "risk": "Legal",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "ESIGNATURE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "contractId",
+      "counterparty",
+      "value",
+      "currency"
+    ],
+    "properties": {
+      "contractId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "counterparty": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

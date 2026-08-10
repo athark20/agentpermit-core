@@ -1,0 +1,28 @@
+{
+  "actionId": "Production.Deploy",
+  "displayName": "Deploy a release to production",
+  "domain": "CloudOps",
+  "risk": "Operational",
+  "consequenceTier": "HIGH",
+  "targetSystem": "CICD",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "service",
+      "version"
+    ],
+    "properties": {
+      "service": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "version": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40
+      }
+    }
+  }
+}

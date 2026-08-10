@@ -1,0 +1,18 @@
+{
+  "actionId": "Vendor.UpdateBankDetails",
+  "displayName": "Change a vendor's bank (IBAN) details",
+  "domain": "Finance",
+  "risk": "Financial",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "FINANCE_AP",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["vendorCode", "newIban", "reason"],
+    "properties": {
+      "vendorCode": { "type": "string", "minLength": 1, "maxLength": 20 },
+      "newIban": { "type": "string", "minLength": 15, "maxLength": 40 },
+      "reason": { "type": "string", "minLength": 3, "maxLength": 500 }
+    }
+  }
+}

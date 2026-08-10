@@ -1,0 +1,20 @@
+{
+  "policyCode": "AgentPermit.Baseline",
+  "version": "2.2.0",
+  "defaultDecision": "DENY",
+  "rules": [
+    { "id": "refund-allow-below-250", "name": "Auto-approve small refunds", "priority": 10, "actionId": "Refund.Issue", "decision": "ALLOW", "approverRoles": [], "conditions": [ { "field": "amount", "operator": "lessThan", "value": 250 } ] },
+    { "id": "refund-approval-250-2000", "name": "Refund approval band", "priority": 20, "actionId": "Refund.Issue", "decision": "REQUIRE_APPROVAL", "approverRoles": ["RefundApprover"], "conditions": [ { "field": "amount", "operator": "greaterThanOrEqual", "value": 250 }, { "field": "amount", "operator": "lessThanOrEqual", "value": 2000 } ] },
+    { "id": "refund-deny-above-2000", "name": "Deny large refunds", "priority": 30, "actionId": "Refund.Issue", "decision": "DENY", "approverRoles": [], "conditions": [ { "field": "amount", "operator": "greaterThan", "value": 2000 } ] },
+
+    { "id": "vendor-lookup-allow", "name": "Vendor lookups are always allowed", "priority": 100, "actionId": "Vendor.Lookup", "decision": "ALLOW", "approverRoles": [], "conditions": [] },
+    { "id": "invoice-lookup-allow", "name": "Invoice lookups are always allowed", "priority": 110, "actionId": "Invoice.Lookup", "decision": "ALLOW", "approverRoles": [], "conditions": [] },
+    { "id": "invoice-approve-allow", "name": "Invoice approval is a routine step", "priority": 120, "actionId": "Invoice.Approve", "decision": "ALLOW", "approverRoles": [], "conditions": [] },
+
+    { "id": "payment-deny-above-20000", "name": "Block very large payments", "priority": 130, "actionId": "Payment.Issue", "decision": "DENY", "approverRoles": [], "conditions": [ { "field": "amount", "operator": "greaterThan", "value": 20000 } ] },
+    { "id": "payment-approval-1000-20000", "name": "Payments over AED 1,000 need sign-off", "priority": 140, "actionId": "Payment.Issue", "decision": "REQUIRE_APPROVAL", "approverRoles": ["PaymentApprover"], "conditions": [ { "field": "amount", "operator": "greaterThan", "value": 1000 }, { "field": "amount", "operator": "lessThanOrEqual", "value": 20000 } ] },
+    { "id": "payment-allow-below-1000", "name": "Small vendor payments auto-pay", "priority": 150, "actionId": "Payment.Issue", "decision": "ALLOW", "approverRoles": [], "conditions": [ { "field": "amount", "operator": "lessThanOrEqual", "value": 1000 } ] },
+
+    { "id": "vendor-bank-change-approval", "name": "Vendor bank changes always need sign-off", "priority": 160, "actionId": "Vendor.UpdateBankDetails", "decision": "REQUIRE_APPROVAL", "approverRoles": ["FinanceController"], "conditions": [] }
+  ]
+}

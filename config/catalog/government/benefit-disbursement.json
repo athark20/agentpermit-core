@@ -1,0 +1,40 @@
+{
+  "actionId": "Benefit.Disbursement.Approve",
+  "displayName": "Approve a benefit / grant disbursement",
+  "domain": "Government",
+  "risk": "Financial",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "GOV",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "beneficiaryId",
+      "amount",
+      "currency",
+      "programme"
+    ],
+    "properties": {
+      "beneficiaryId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "programme": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

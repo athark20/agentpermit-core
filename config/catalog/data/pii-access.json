@@ -1,0 +1,28 @@
+{
+  "actionId": "PII.Access",
+  "displayName": "Access a record containing personal data",
+  "domain": "DataOps",
+  "risk": "Data",
+  "consequenceTier": "HIGH",
+  "targetSystem": "DATA",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "recordId",
+      "purpose"
+    ],
+    "properties": {
+      "recordId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "purpose": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

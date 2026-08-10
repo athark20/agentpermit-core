@@ -1,0 +1,39 @@
+{
+  "actionId": "Requisition.Submit",
+  "displayName": "Submit a purchase requisition",
+  "domain": "Procurement",
+  "risk": "Operational",
+  "consequenceTier": "LOW",
+  "targetSystem": "PROCUREMENT",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "requesterId",
+      "description",
+      "estimatedAmount",
+      "currency"
+    ],
+    "properties": {
+      "requesterId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "description": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      },
+      "estimatedAmount": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

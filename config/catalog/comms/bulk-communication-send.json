@@ -1,0 +1,33 @@
+{
+  "actionId": "Bulk.Communication.Send",
+  "displayName": "Send a bulk customer communication",
+  "domain": "Communications",
+  "risk": "Reputational",
+  "consequenceTier": "HIGH",
+  "targetSystem": "COMMS",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "campaignId",
+      "channel",
+      "audienceSize"
+    ],
+    "properties": {
+      "campaignId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "channel": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 30
+      },
+      "audienceSize": {
+        "type": "integer",
+        "minimum": 1
+      }
+    }
+  }
+}

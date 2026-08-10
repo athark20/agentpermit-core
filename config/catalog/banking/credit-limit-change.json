@@ -1,0 +1,39 @@
+{
+  "actionId": "CreditLimit.Change",
+  "displayName": "Change a customer credit limit",
+  "domain": "Banking",
+  "risk": "Financial",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "BANKING_CORE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "accountId",
+      "newLimit",
+      "currency",
+      "reason"
+    ],
+    "properties": {
+      "accountId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "newLimit": {
+        "type": "number",
+        "minimum": 0
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

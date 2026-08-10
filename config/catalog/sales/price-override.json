@@ -1,0 +1,39 @@
+{
+  "actionId": "Price.Override",
+  "displayName": "Override list price on a quote",
+  "domain": "Sales",
+  "risk": "Financial",
+  "consequenceTier": "HIGH",
+  "targetSystem": "CRM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "quoteId",
+      "newPrice",
+      "currency",
+      "reason"
+    ],
+    "properties": {
+      "quoteId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "newPrice": {
+        "type": "number",
+        "minimum": 0
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

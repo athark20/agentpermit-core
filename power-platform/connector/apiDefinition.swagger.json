@@ -1,0 +1,258 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "AgentPermit",
+    "description": "AgentPermit governs which actions a Copilot agent may perform. Submit an action for a deterministic ALLOW / DENY / REQUIRE_APPROVAL decision, and check its status. This connector exposes only RequestAction and GetActionStatus; the refund target system is never reachable from here.",
+    "version": "1.0"
+  },
+  "host": "YOUR_APIM.azure-api.net",
+  "basePath": "/agentpermit",
+  "schemes": [
+    "https"
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/api/actions/request": {
+      "post": {
+        "operationId": "RequestAction",
+        "summary": "Request an action",
+        "description": "Submits an action for policy evaluation and returns ALLOW, DENY or REQUIRE_APPROVAL.",
+        "consumes": [
+          "application/json"
+        ],
+        "produces": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/ActionRequest"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Decision returned",
+            "schema": {
+              "$ref": "#/definitions/ActionResponse"
+            }
+          }
+        }
+      }
+    },
+    "/api/actions/{actionRequestId}": {
+      "get": {
+        "operationId": "GetActionStatus",
+        "summary": "Get action status",
+        "description": "Returns the current status and decision of a previously submitted request.",
+        "produces": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "actionRequestId",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "description": "The actionRequestId returned by Request an action."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current status",
+            "schema": {
+              "$ref": "#/definitions/ActionStatus"
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "ActionRequest": {
+      "type": "object",
+      "required": [
+        "actionId",
+        "agentId",
+        "idempotencyKey",
+        "parameters"
+      ],
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "title": "Action ID",
+          "default": "Refund.Issue",
+          "description": "The action to request."
+        },
+        "agentId": {
+          "type": "string",
+          "title": "Agent ID",
+          "description": "This agent's own Microsoft Entra Agent ID (its badge), e.g. a2451d53-...; AgentPermit governs each agent by this id."
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "title": "Idempotency key",
+          "description": "A unique key for THIS logical request (>= 8 chars). Map it to a per-request id (e.g. a GUID / turn id) so a retry is deduplicated and two separate actions are never merged. Do not AI-fill."
+        },
+        "parameters": {
+          "$ref": "#/definitions/RefundParameters"
+        }
+      }
+    },
+    "RefundParameters": {
+      "type": "object",
+      "properties": {
+        "customerId": {
+          "type": "string",
+          "title": "Customer ID"
+        },
+        "amount": {
+          "type": "number",
+          "title": "Amount"
+        },
+        "currency": {
+          "type": "string",
+          "title": "Currency",
+          "default": "AED"
+        },
+        "reason": {
+          "type": "string",
+          "title": "Reason"
+        },
+        "invoiceNumber": {
+          "type": "string",
+          "title": "Invoice number",
+          "description": "For Invoice.* and Payment.Issue."
+        },
+        "vendorCode": {
+          "type": "string",
+          "title": "Vendor code",
+          "description": "For Vendor.* and Payment.Issue, e.g. V-1001."
+        },
+        "approver": {
+          "type": "string",
+          "title": "Approver",
+          "description": "For Invoice.Approve."
+        },
+        "note": {
+          "type": "string",
+          "title": "Note"
+        },
+        "newIban": {
+          "type": "string",
+          "title": "New IBAN",
+          "description": "For Vendor.UpdateBankDetails."
+        }
+      },
+      "title": "Action parameters"
+    },
+    "ActionResponse": {
+      "type": "object",
+      "properties": {
+        "correlationId": {
+          "type": "string",
+          "title": "Correlation ID"
+        },
+        "actionRequestId": {
+          "type": "string",
+          "title": "Action request ID"
+        },
+        "decision": {
+          "type": "string",
+          "title": "Decision"
+        },
+        "status": {
+          "type": "string",
+          "title": "Status"
+        },
+        "reasonCode": {
+          "type": "string",
+          "title": "Reason code"
+        },
+        "reason": {
+          "type": "string",
+          "title": "Reason"
+        },
+        "approvalRequestId": {
+          "type": "string",
+          "title": "Approval request ID",
+          "description": "Present when the decision is REQUIRE_APPROVAL."
+        },
+        "receiptNumber": {
+          "type": "string",
+          "title": "Receipt number",
+          "description": "Signed receipt id, present when the action executed."
+        },
+        "targetResourceId": {
+          "type": "string",
+          "title": "Result reference",
+          "description": "The created/affected record id, e.g. a payment reference or vendor code."
+        },
+        "result": {
+          "type": "string",
+          "title": "Result data",
+          "description": "JSON with the executed action's data (vendor/invoice looked up, or payment created) for the agent to report to the user."
+        }
+      }
+    },
+    "ActionStatus": {
+      "type": "object",
+      "properties": {
+        "actionRequestId": {
+          "type": "string",
+          "title": "Action request ID"
+        },
+        "actionId": {
+          "type": "string",
+          "title": "Action ID"
+        },
+        "agentId": {
+          "type": "string",
+          "title": "Agent ID"
+        },
+        "correlationId": {
+          "type": "string",
+          "title": "Correlation ID"
+        },
+        "decision": {
+          "type": "string",
+          "title": "Decision"
+        },
+        "status": {
+          "type": "string",
+          "title": "Status"
+        },
+        "reason": {
+          "type": "string",
+          "title": "Reason"
+        }
+      }
+    }
+  },
+  "securityDefinitions": {
+    "oauth2-auth": {
+      "type": "oauth2",
+      "flow": "accessCode",
+      "authorizationUrl": "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/oauth2/v2.0/authorize",
+      "tokenUrl": "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/oauth2/v2.0/token",
+      "scopes": {
+        "api://33333333-3333-3333-3333-333333333333/access_as_user": "Access AgentPermit as the signed-in user"
+      }
+    }
+  },
+  "security": [
+    {
+      "oauth2-auth": [
+        "api://33333333-3333-3333-3333-333333333333/access_as_user"
+      ]
+    }
+  ]
+}

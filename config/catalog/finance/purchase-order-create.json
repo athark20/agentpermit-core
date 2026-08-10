@@ -1,0 +1,40 @@
+{
+  "actionId": "PurchaseOrder.Create",
+  "displayName": "Create a purchase order",
+  "domain": "Procurement",
+  "risk": "Financial",
+  "consequenceTier": "MEDIUM",
+  "targetSystem": "PROCUREMENT",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "vendorCode",
+      "amount",
+      "currency",
+      "description"
+    ],
+    "properties": {
+      "vendorCode": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "description": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

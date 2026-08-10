@@ -1,0 +1,28 @@
+{
+  "actionId": "Change.Normal.Approve",
+  "displayName": "Approve a normal change",
+  "domain": "ITSM",
+  "risk": "Operational",
+  "consequenceTier": "MEDIUM",
+  "targetSystem": "ITSM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "changeId",
+      "summary"
+    ],
+    "properties": {
+      "changeId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

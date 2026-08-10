@@ -1,0 +1,40 @@
+{
+  "actionId": "CreditNote.Issue",
+  "displayName": "Issue a customer credit note",
+  "domain": "Finance",
+  "risk": "Financial",
+  "consequenceTier": "HIGH",
+  "targetSystem": "ERP_FINANCE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "customerId",
+      "amount",
+      "currency",
+      "reason"
+    ],
+    "properties": {
+      "customerId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

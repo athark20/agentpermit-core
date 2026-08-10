@@ -1,0 +1,34 @@
+{
+  "actionId": "Prescription.Issue",
+  "displayName": "Issue a prescription",
+  "domain": "Healthcare",
+  "risk": "Safety",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "EHR",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "patientId",
+      "medication",
+      "dosage"
+    ],
+    "properties": {
+      "patientId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "medication": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "dosage": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      }
+    }
+  }
+}

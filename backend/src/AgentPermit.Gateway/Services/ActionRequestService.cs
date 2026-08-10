@@ -1,0 +1,501 @@
+using System.Text.Json;
+using AgentPermit.Gateway.Common;
+using AgentPermit.Gateway.Contracts;
+using AgentPermit.Gateway.ControlPlane;
+using AgentPermit.Gateway.Domain;
+using AgentPermit.Gateway.Observations;
+using AgentPermit.Gateway.Persistence;
+using AgentPermit.Gateway.Policies;
+using AgentPermit.Gateway.Registry;
+
+namespace AgentPermit.Gateway.Services;
+
+public sealed class ApprovalOptions
+{
+    public int ExpiryHours { get; set; } = 24;
+}
+
+/// <summary>
+/// The gateway pipeline for POST /api/actions/request:
+/// validate agent → validate action → validate parameters → evaluate policy →
+/// persist (audit) → ALLOW: execute + receipt / REQUIRE_APPROVAL: open approval / DENY: stop.
+/// Idempotency and full auditing are guaranteed for every request.
+/// </summary>
+public sealed class ActionRequestService(
+    IAgentRegistry agents,
+    IActionRegistry actions,
+    IPolicyEngine policy,
+    EnforcementGate enforcement,
+    SafetyGate safety,
+    ITargetSystemRegistry targets,
+    IObservationStore observations,
+    FeedStatusTracker feedStatus,
+    IAgentPermitStore store,
+    ExecutionService execution,
+    ITeamsNotifier teams,
+    SecurityOptions security,
+    ApprovalOptions approvalOptions,
+    ILogger<ActionRequestService> logger)
+{
+    public async Task<ActionResponseDto> ProcessAsync(ActionRequestDto dto, CallerContext caller, CancellationToken ct)
+    {
+        // A trusted connector may identify the CALLING agent by its own Entra Agent ID (its "badge").
+        // The maker can supply that badge in whichever field their tooling actually exposes: the
+        // X-Agent-Identity header, the agentIdentity body field, OR — because Copilot Studio only shows
+        // body fields and caches connector schemas — directly in the agentId field. We resolve the badge
+        // from the first of those that names a registered agent. Only a trusted connector may assert it.
+        string? badge = null;
+        if (caller.FromTrustedConnector)
+        {
+            badge = !string.IsNullOrWhiteSpace(caller.AssertedAgentIdentity) ? caller.AssertedAgentIdentity!.Trim()
+                  : !string.IsNullOrWhiteSpace(dto.AgentIdentity) ? dto.AgentIdentity!.Trim()
+                  : null;
+            // Fall back to the agentId field when it carries the Entra Agent ID rather than the agent name.
+            // A GUID-shaped agentId is unambiguously an Entra Agent ID (agent names are slugs, never GUIDs),
+            // so treat it as the badge even if unregistered — that yields a clear AGENT_NOT_REGISTERED below.
+            if (string.IsNullOrEmpty(badge) && !string.IsNullOrWhiteSpace(dto.AgentId)
+                && Guid.TryParse(dto.AgentId.Trim(), out _))
+                badge = dto.AgentId.Trim();
+        }
+        var identityAsserted = !string.IsNullOrEmpty(badge);
+
+        // --- Envelope validation (malformed => 400 via exception) ---
+        if (string.IsNullOrWhiteSpace(dto.ActionId))
+            throw new GatewayValidationException("actionId is required.");
+        // agentId is optional when a trusted connector already tells us which agent this is (badge).
+        if (string.IsNullOrWhiteSpace(dto.AgentId) && !identityAsserted)
+            throw new GatewayValidationException("agentId is required.");
+        // Idempotency is CALLER-owned: the caller declares which calls are the same logical action. The
+        // gateway must never invent it (a derived/content key would treat two legitimate identical actions
+        // as a duplicate and silently skip the second — unacceptable for a refund/payment).
+        if (string.IsNullOrWhiteSpace(dto.IdempotencyKey) || dto.IdempotencyKey.Trim().Length < 8)
+            throw new GatewayValidationException("idempotencyKey is required and must be at least 8 characters.");
+        dto.IdempotencyKey = dto.IdempotencyKey.Trim();
+        if (dto.Parameters.ValueKind != JsonValueKind.Object)
+            throw new GatewayValidationException("parameters must be a JSON object.");
+
+        var correlationId = ResolveCorrelationId(dto.CorrelationId);
+
+        // Freeze the payload and its hash up front (needed for the idempotency comparison).
+        var payloadJson = dto.Parameters.GetRawText();
+        var payloadHash = CanonicalJson.Hash(dto.Parameters);
+
+        // --- Idempotency: same key + same payload replays; same key + CHANGED payload is rejected ---
+        var existing = await store.FindByIdempotencyKeyAsync(dto.IdempotencyKey, ct);
+        if (existing is not null)
+        {
+            if (string.Equals(existing.RequestPayloadHash, payloadHash, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogInformation("Replay for idempotency key {Key} -> request {RequestId}.",
+                    dto.IdempotencyKey, existing.ActionRequestId);
+                return await BuildReplayResponseAsync(existing, ct);
+            }
+
+            logger.LogWarning("Idempotency key {Key} reused with a DIFFERENT payload; rejected.", dto.IdempotencyKey);
+            return BuildResponse(existing, existing.CorrelationId, Decision.Deny, existing.Status,
+                "Gateway.Idempotency", "1.0.0", ReasonCode.IdempotencyPayloadMismatch,
+                "This idempotency key was already used with a different payload.", existing.RequestPayloadHash);
+        }
+
+        // --- Resolve + authorize the agent against the AUTHENTICATED identity (never body alone) ---
+        if (security.EnforceIdentityBinding)
+        {
+            if (!caller.OriginVerified)
+                return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                    ReasonCode.NotFromApim, "Request did not originate from API Management.", ct);
+            if (string.IsNullOrEmpty(caller.AuthenticatedClientId))
+                return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                    ReasonCode.IdentityRequired, "An authenticated agent identity is required.", ct);
+        }
+
+        AgentInfo? agent;
+        if (identityAsserted)
+        {
+            // Carried-badge path (multi-agent fleets): the request arrived through a TRUSTED AgentPermit
+            // connector that carries the CALLING agent's own Entra Agent ID. The connector proves origin;
+            // the carried Agent ID identifies which specific agent it is.
+            agent = agents.FindByEntraClientId(badge!);
+            if (agent is null)
+                return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                    ReasonCode.AgentNotRegistered,
+                    $"Carried agent identity '{badge}' is not bound to a registered agent.", ct);
+        }
+        else if (!string.IsNullOrEmpty(caller.AuthenticatedClientId))
+        {
+            // Authoritative path: the agent is whoever the authenticated identity is bound to.
+            agent = agents.FindByEntraClientId(caller.AuthenticatedClientId);
+            if (agent is null)
+                return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                    ReasonCode.AgentNotRegistered,
+                    $"Authenticated identity '{caller.AuthenticatedClientId}' is not bound to a registered agent.", ct);
+        }
+        else
+        {
+            // No identity asserted and binding not enforced (local/dev): fall back to the body agentId.
+            agent = agents.Find(dto.AgentId);
+            if (agent is null)
+                return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                    ReasonCode.AgentNotRegistered, $"Agent '{dto.AgentId}' is not registered.", ct);
+        }
+
+        // Whenever an identity was asserted (connector-carried badge or token), a body agentId that is
+        // supplied must match the resolved agent — a body value that disagrees is a spoof attempt.
+        // (agentId may be omitted entirely on the badge path; and when the maker put the badge itself in
+        // the agentId field, agentId == badge is legitimate. Only a value that is neither is rejected.)
+        if ((identityAsserted || !string.IsNullOrEmpty(caller.AuthenticatedClientId))
+            && !string.IsNullOrWhiteSpace(dto.AgentId)
+            && !string.Equals(dto.AgentId, agent.AgentId, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(dto.AgentId, badge, StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning("Agent-id spoof rejected: body '{Body}' != resolved '{Bound}'.", dto.AgentId, agent.AgentId);
+            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                ReasonCode.AgentIdentityMismatch,
+                $"Body agentId '{dto.AgentId}' does not match the resolved agent identity.", ct);
+        }
+
+        var executingAgentId = agent.AgentId; // authoritative
+
+        // --- Validate action (unknown => audited DENY) ---
+        var action = actions.Find(dto.ActionId);
+        if (action is null)
+        {
+            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                ReasonCode.UnknownAction, $"Action '{dto.ActionId}' is not registered.", ct);
+        }
+
+        // --- Validate parameters against the action schema (invalid => audited DENY) ---
+        var paramErrors = actions.ValidateParameters(action, dto.Parameters);
+        if (paramErrors.Count > 0)
+        {
+            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                ReasonCode.InvalidParameters, string.Join("; ", paramErrors), ct);
+        }
+
+        // --- Always-on safety gate (kill switch + velocity circuit breaker) ---
+        // Checked before policy and never subject to warm-up: an emergency freeze or a runaway agent is a
+        // hard deny regardless of what policy or posture would allow.
+        var safetyResult = await safety.CheckAsync(executingAgentId, ct);
+        if (!safetyResult.Allowed)
+            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                safetyResult.ReasonCode!, safetyResult.Reason!, ct);
+
+        // --- Evaluate policy (against the active immutable snapshot) ---
+        var computed = policy.Evaluate(new PolicyEvaluationContext
+        {
+            Action = action,
+            Parameters = dto.Parameters,
+            AgentId = executingAgentId,
+            RootAgentId = dto.RootAgentId,
+            InitiatingUserId = dto.InitiatingUserId
+        });
+
+        // --- Apply the agent's rollout posture (secure-by-default warm-up gate) ---
+        // The action's EFFECTIVE consequence is the severest of its own declared tier and its target
+        // system's, so an action that hits a money/PII target is treated as HIGH even if it under-declared.
+        // During OBSERVE/WARN warm-up a computed block/step-up on a LOW/MEDIUM-consequence action is
+        // downgraded to ALLOW and only recorded — but a HIGH/CRITICAL action is always enforced. Both the
+        // computed and the effective decision are persisted, so the audit trail shows what WOULD have
+        // happened even when a warm-up let it through.
+        var effectiveConsequence = ConsequenceTier.Severest(
+            action.ConsequenceTier, targets.Find(action.TargetSystem)?.ConsequenceTier);
+        var effective = enforcement.Apply(computed, agent, effectiveConsequence);
+        if (effective.Downgraded)
+            logger.LogWarning("Enforcement {Mode}: agent {Agent} action {Action} would have been {Computed} " +
+                "but was allowed ({Tier}, posture {Posture}).",
+                effective.Mode, executingAgentId, dto.ActionId, effective.ComputedDecision,
+                effective.ConsequenceTier, effective.Posture);
+
+        // --- Persist the request (audit spine) at its decision-derived initial state ---
+        var initialStatus = RequestStateMachine.InitialFor(effective.Decision);
+
+        var request = new ActionRequestRecord
+        {
+            ActionRequestId = Guid.NewGuid(),
+            CorrelationId = correlationId,
+            IdempotencyKey = dto.IdempotencyKey!,
+            RootAgentId = dto.RootAgentId,
+            ExecutingAgentId = executingAgentId,
+            InitiatingUserId = dto.InitiatingUserId,
+            ActionId = dto.ActionId!,
+            RequestPayloadJson = payloadJson,
+            RequestPayloadHash = payloadHash,
+            Status = initialStatus,
+            CreatedUtc = DateTimeOffset.UtcNow,
+            UpdatedUtc = DateTimeOffset.UtcNow
+        };
+        await store.InsertActionRequestAsync(request, ct);
+        await PersistDecisionAsync(request.ActionRequestId, computed, effective, ct);
+        await RecordObservationAsync(request, action, computed, effective, ct);
+
+        return effective.Decision switch
+        {
+            Decision.Allow => await HandleAllowAsync(request, dto.Parameters, computed, effective, correlationId, ct),
+            Decision.RequireApproval => await HandleRequireApprovalAsync(request, computed, effective, correlationId, ct),
+            _ => BuildResponse(request, correlationId, Decision.Deny, RequestState.Denied, computed.PolicyCode,
+                    computed.PolicyVersion, computed.ReasonCode, computed.Reason, payloadHash, effective)
+        };
+    }
+
+    private async Task<ActionResponseDto> HandleAllowAsync(
+        ActionRequestRecord request, JsonElement parameters, PolicyEvaluationResult computed,
+        EffectiveDecision effective, Guid correlationId, CancellationToken ct)
+    {
+        ExecutionOutcome outcome;
+        try
+        {
+            outcome = await execution.ExecuteAsync(
+                request, parameters, Decision.Allow, computed.PolicyVersion, ct);
+        }
+        catch (TargetExecutionException ex)
+        {
+            // Policy allowed, but the target system enforced its own rule (defense in depth). Return a clean
+            // ALLOW-but-failed result the agent can relay, not a 500.
+            var failed = BuildResponse(request, correlationId, Decision.Allow, RequestState.Failed,
+                computed.PolicyCode, computed.PolicyVersion, ex.Code, ex.Message, request.RequestPayloadHash, effective);
+            return failed;
+        }
+
+        // On a warm-up downgrade the reason explains what WOULD have happened; otherwise the policy reason.
+        var reason = effective.Downgraded ? effective.Note : computed.Reason;
+        var response = BuildResponse(request, correlationId, Decision.Allow, RequestState.Succeeded,
+            computed.PolicyCode, computed.PolicyVersion, computed.ReasonCode, reason, request.RequestPayloadHash, effective);
+        response.Receipt = ReceiptService.ToDto(outcome.Receipt, request.RequestPayloadHash);
+        response.Result = outcome.Execution.ResultJson;
+        response.ReceiptNumber = response.Receipt?.ReceiptNumber;
+        response.TargetResourceId = response.Receipt?.TargetResourceId ?? outcome.Execution.TargetResourceId;
+        return response;
+    }
+
+    private async Task<ActionResponseDto> HandleRequireApprovalAsync(
+        ActionRequestRecord request, PolicyEvaluationResult result, EffectiveDecision effective,
+        Guid correlationId, CancellationToken ct)
+    {
+        var approval = new ApprovalRequestRecord
+        {
+            ApprovalRequestId = Guid.NewGuid(),
+            ActionRequestId = request.ActionRequestId,
+            ApprovalType = "SingleApprover",
+            ApproverRole = result.RequiredApproverRoles.FirstOrDefault(),
+            PayloadHash = request.RequestPayloadHash,
+            Status = ApprovalStatus.Pending,
+            RequestedUtc = DateTimeOffset.UtcNow,
+            ExpiresUtc = DateTimeOffset.UtcNow.AddHours(approvalOptions.ExpiryHours)
+        };
+        await store.InsertApprovalRequestAsync(approval, ct);
+
+        // Best-effort Teams Adaptive Card to alert approvers (no-op if not configured).
+        await teams.NotifyApprovalRequestedAsync(approval, request, ct);
+
+        var response = BuildResponse(request, correlationId, Decision.RequireApproval,
+            RequestState.AwaitingApproval, result.PolicyCode, result.PolicyVersion,
+            result.ReasonCode, result.Reason, request.RequestPayloadHash, effective);
+        response.ApprovalRequestId = approval.ApprovalRequestId;
+        return response;
+    }
+
+    private async Task<ActionResponseDto> DenyAsync(
+        ActionRequestDto dto, Guid correlationId, string payloadJson, string payloadHash,
+        string reasonCode, string reason, CancellationToken ct)
+    {
+        // Even rejected requests are persisted so every request produces an audit record.
+        var request = new ActionRequestRecord
+        {
+            ActionRequestId = Guid.NewGuid(),
+            CorrelationId = correlationId,
+            IdempotencyKey = dto.IdempotencyKey!,
+            RootAgentId = dto.RootAgentId,
+            // agentId may be omitted on the badge path; record the badge, else a placeholder, for audit.
+            ExecutingAgentId = !string.IsNullOrWhiteSpace(dto.AgentId) ? dto.AgentId
+                : !string.IsNullOrWhiteSpace(dto.AgentIdentity) ? dto.AgentIdentity! : "(unresolved)",
+            InitiatingUserId = dto.InitiatingUserId,
+            ActionId = dto.ActionId!,
+            RequestPayloadJson = payloadJson,
+            RequestPayloadHash = payloadHash,
+            Status = RequestState.Denied,
+            CreatedUtc = DateTimeOffset.UtcNow,
+            UpdatedUtc = DateTimeOffset.UtcNow
+        };
+        await store.InsertActionRequestAsync(request, ct);
+        await store.InsertPolicyDecisionAsync(new PolicyDecisionRecord
+        {
+            PolicyDecisionId = Guid.NewGuid(),
+            ActionRequestId = request.ActionRequestId,
+            Decision = Decision.Deny,
+            PolicyCode = "Gateway.Validation",
+            PolicyVersion = "1.0.0",
+            DecisionReason = reason,
+            EvaluationTraceJson = JsonSerializer.Serialize(new { reasonCode }),
+            EvaluatedUtc = DateTimeOffset.UtcNow
+        }, ct);
+
+        return BuildResponse(request, correlationId, Decision.Deny, RequestState.Denied,
+            "Gateway.Validation", "1.0.0", reasonCode, reason, payloadHash);
+    }
+
+    private Task PersistDecisionAsync(
+        Guid requestId, PolicyEvaluationResult computed, EffectiveDecision effective, CancellationToken ct)
+        => store.InsertPolicyDecisionAsync(new PolicyDecisionRecord
+        {
+            PolicyDecisionId = Guid.NewGuid(),
+            ActionRequestId = requestId,
+            // Record what ACTUALLY happened; the trace preserves the computed decision + posture for evidence.
+            Decision = effective.Decision,
+            PolicyCode = computed.PolicyCode,
+            PolicyVersion = computed.PolicyVersion,
+            DecisionReason = effective.Downgraded
+                ? $"{computed.Reason} [{effective.Mode}: {effective.Note}]"
+                : computed.Reason,
+            EvaluationTraceJson = MergeTrace(computed, effective),
+            EvaluatedUtc = DateTimeOffset.UtcNow
+        }, ct);
+
+    /// <summary>
+    /// Append the decision to the observation trail (evidence for rollout). Best-effort: an observation-store
+    /// failure must never fail a governed request, so it is logged and swallowed.
+    /// </summary>
+    private async Task RecordObservationAsync(
+        ActionRequestRecord request, ActionDefinition action,
+        PolicyEvaluationResult computed, EffectiveDecision effective, CancellationToken ct)
+    {
+        try
+        {
+            await observations.AppendAsync(new ObservationRecord
+            {
+                OccurredUtc = request.CreatedUtc,
+                Source = ObservationSource.Gateway,
+                AgentId = request.ExecutingAgentId,
+                ActionId = request.ActionId,
+                TargetSystem = string.IsNullOrWhiteSpace(action.TargetSystem) ? null : action.TargetSystem,
+                ComputedDecision = effective.ComputedDecision,
+                EffectiveDecision = effective.Decision,
+                EnforcementMode = effective.Mode,
+                ConsequenceTier = effective.ConsequenceTier,
+                WouldHaveBlocked = effective.Downgraded,
+                CorrelationId = request.CorrelationId.ToString()
+            }, ct);
+            feedStatus.RecordGatewayPush();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to append observation for request {RequestId} (non-fatal).",
+                request.ActionRequestId);
+        }
+    }
+
+    /// <summary>Combine the policy engine trace with the enforcement-posture outcome for the audit record.</summary>
+    private static string MergeTrace(PolicyEvaluationResult computed, EffectiveDecision effective)
+    {
+        using var doc = JsonDocument.Parse(
+            string.IsNullOrWhiteSpace(computed.TraceJson) ? "{}" : computed.TraceJson);
+        return JsonSerializer.Serialize(new
+        {
+            enforcement = new
+            {
+                computedDecision = effective.ComputedDecision,
+                effectiveDecision = effective.Decision,
+                mode = effective.Mode,
+                posture = effective.Posture,
+                consequenceTier = effective.ConsequenceTier,
+                downgraded = effective.Downgraded,
+                note = effective.Note
+            },
+            policyTrace = doc.RootElement.Clone()
+        });
+    }
+
+    /// <summary>Current status of a request, or null if the id is unknown. Backs GetActionStatus.</summary>
+    public async Task<ActionStatusDto?> GetStatusAsync(Guid actionRequestId, CancellationToken ct)
+    {
+        var request = await store.GetActionRequestAsync(actionRequestId, ct);
+        if (request is null) return null;
+
+        var decision = await store.GetLatestPolicyDecisionAsync(actionRequestId, ct);
+        var receipt = await store.GetReceiptForRequestAsync(actionRequestId, ct);
+
+        return new ActionStatusDto
+        {
+            ActionRequestId = request.ActionRequestId,
+            ActionId = request.ActionId,
+            AgentId = request.ExecutingAgentId,
+            CorrelationId = request.CorrelationId.ToString(),
+            Decision = decision?.Decision,
+            Status = request.Status,
+            PolicyCode = decision?.PolicyCode,
+            PolicyVersion = decision?.PolicyVersion,
+            Reason = decision?.DecisionReason,
+            PayloadHash = request.RequestPayloadHash,
+            Receipt = receipt is null ? null : ReceiptService.ToDto(receipt, request.RequestPayloadHash),
+            CreatedAtUtc = request.CreatedUtc,
+            UpdatedAtUtc = request.UpdatedUtc
+        };
+    }
+
+    private async Task<ActionResponseDto> BuildReplayResponseAsync(ActionRequestRecord request, CancellationToken ct)
+    {
+        var decisionRecord = await store.GetLatestPolicyDecisionAsync(request.ActionRequestId, ct);
+        var decision = decisionRecord?.Decision ?? Decision.Deny;
+
+        var response = BuildResponse(request, request.CorrelationId, decision, request.Status,
+            decisionRecord?.PolicyCode ?? "", decisionRecord?.PolicyVersion ?? "",
+            reasonCode: null, decisionRecord?.DecisionReason, request.RequestPayloadHash);
+        response.Replayed = true;
+
+        if (decision == Decision.Allow)
+        {
+            var receipt = await store.GetReceiptForRequestAsync(request.ActionRequestId, ct);
+            if (receipt is not null)
+                response.Receipt = ReceiptService.ToDto(receipt, request.RequestPayloadHash);
+        }
+        return response;
+    }
+
+    private static ActionResponseDto BuildResponse(
+        ActionRequestRecord request, Guid correlationId, string decision, string status,
+        string policyCode, string policyVersion, string? reasonCode, string? reason, string payloadHash,
+        EffectiveDecision? effective = null)
+    {
+        // Enrich the request's trace span so the governance decision surfaces in App Insights as
+        // customDimensions — correlated (via W3C trace context) with the Copilot Studio conversation.
+        var act = System.Diagnostics.Activity.Current;
+        if (act is not null)
+        {
+            act.SetTag("component", "AgentPermit");
+            act.SetTag("agentpermit.decision", decision);
+            act.SetTag("agentpermit.status", status);
+            act.SetTag("agentpermit.actionId", request.ActionId);
+            act.SetTag("agentpermit.agentId", request.ExecutingAgentId);
+            act.SetTag("agentpermit.correlationId", correlationId.ToString());
+            act.SetTag("agentpermit.policyVersion", policyVersion);
+            act.SetTag("agentpermit.reasonCode", reasonCode);
+            act.SetTag("agentpermit.consequenceTier", effective?.ConsequenceTier?.ToString());
+            act.SetTag("agentpermit.enforcementMode", effective?.Mode?.ToString());
+        }
+        return new()
+        {
+        CorrelationId = correlationId.ToString(),
+        ActionRequestId = request.ActionRequestId,
+        ActionId = request.ActionId,
+        AgentId = request.ExecutingAgentId,
+        Decision = decision,
+        Status = status,
+        PolicyCode = policyCode,
+        PolicyVersion = policyVersion,
+        ReasonCode = reasonCode,
+        Reason = reason,
+        PayloadHash = payloadHash,
+        // Surface how binding the decision was, and the computed decision when a warm-up downgraded it.
+        EnforcementMode = effective?.Mode,
+        ComputedDecision = effective is { Downgraded: true } ? effective.ComputedDecision : null,
+        EvaluatedAtUtc = DateTimeOffset.UtcNow
+        };
+    }
+
+    private static Guid ResolveCorrelationId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return Guid.NewGuid();
+        if (Guid.TryParse(value, out var parsed))
+            return parsed;
+        throw new GatewayValidationException("correlationId must be a valid UUID when supplied.");
+    }
+}

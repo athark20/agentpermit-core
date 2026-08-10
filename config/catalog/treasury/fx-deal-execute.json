@@ -1,0 +1,44 @@
+{
+  "actionId": "Treasury.FxDeal.Execute",
+  "displayName": "Execute an FX / hedging transaction",
+  "domain": "Treasury",
+  "risk": "Financial",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "TREASURY",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "dealType",
+      "buyCurrency",
+      "sellCurrency",
+      "amount",
+      "rate"
+    ],
+    "properties": {
+      "dealType": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20
+      },
+      "buyCurrency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      },
+      "sellCurrency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "rate": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      }
+    }
+  }
+}

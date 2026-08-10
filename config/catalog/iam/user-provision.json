@@ -1,0 +1,28 @@
+{
+  "actionId": "User.Provision",
+  "displayName": "Provision a new user account (joiner)",
+  "domain": "IdentityAccess",
+  "risk": "Identity",
+  "consequenceTier": "HIGH",
+  "targetSystem": "IAM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "userPrincipalName",
+      "displayName"
+    ],
+    "properties": {
+      "userPrincipalName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "displayName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "version": "1.0.0",
+  "description": "AgentPermit connector risk catalog — maps Power Platform connectors to a consequence tier and risk categories. First matching entry wins (order = priority); an unlisted connector falls back to keyword heuristics, then to HIGH (fail closed). Curated + updatable like a threat-intel feed.",
+  "entries": [
+    { "match": "shared_sql", "tier": "HIGH", "categories": ["write", "egress"], "reason": "Direct SQL read/write to a system of record" },
+    { "match": "shared_azureblob", "tier": "HIGH", "categories": ["egress"], "reason": "Bulk blob storage egress" },
+    { "match": "shared_azurefile", "tier": "HIGH", "categories": ["egress"], "reason": "File share egress" },
+    { "match": "shared_documentdb", "tier": "HIGH", "categories": ["write", "egress"], "reason": "Cosmos DB read/write" },
+    { "match": "shared_http", "tier": "HIGH", "categories": ["egress", "external"], "reason": "Arbitrary outbound HTTP — unbounded egress" },
+    { "match": "shared_webcontents", "tier": "HIGH", "categories": ["egress", "external"], "reason": "Arbitrary web request" },
+    { "match": "shared_ftp", "tier": "HIGH", "categories": ["egress", "external"], "reason": "File transfer to external host" },
+    { "match": "shared_stripe", "tier": "HIGH", "categories": ["financial"], "reason": "Payment processing" },
+    { "match": "shared_quickbooks", "tier": "HIGH", "categories": ["financial"], "reason": "Accounting / financial records" },
+    { "match": "shared_sap", "tier": "HIGH", "categories": ["financial", "write"], "reason": "ERP / financial system of record" },
+    { "match": "shared_salesforce", "tier": "MEDIUM", "categories": ["write", "pii"], "reason": "CRM records (customer PII)" },
+    { "match": "shared_office365", "tier": "MEDIUM", "categories": ["pii", "egress"], "reason": "Mailbox send/read — data egress + PII" },
+    { "match": "shared_outlook", "tier": "MEDIUM", "categories": ["pii", "egress"], "reason": "Email send/read" },
+    { "match": "shared_sharepointonline", "tier": "MEDIUM", "categories": ["write", "pii"], "reason": "Document read/write" },
+    { "match": "shared_onedrive", "tier": "MEDIUM", "categories": ["egress"], "reason": "File storage egress" },
+    { "match": "shared_commondataservice", "tier": "MEDIUM", "categories": ["write"], "reason": "Dataverse read/write" },
+    { "match": "shared_twitter", "tier": "HIGH", "categories": ["egress", "external"], "reason": "Public external post — reputational egress" },
+    { "match": "shared_facebook", "tier": "HIGH", "categories": ["egress", "external"], "reason": "Public external post" },
+    { "match": "shared_teams", "tier": "LOW", "categories": [], "reason": "Internal chat message" },
+    { "match": "shared_approvals", "tier": "LOW", "categories": [], "reason": "Human approval request" },
+    { "match": "shared_flowpush", "tier": "LOW", "categories": [], "reason": "Notification" },
+    { "match": "shared_bingsearch", "tier": "LOW", "categories": [], "reason": "Read-only web search" }
+  ]
+}

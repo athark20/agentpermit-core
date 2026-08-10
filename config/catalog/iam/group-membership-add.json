@@ -1,0 +1,28 @@
+{
+  "actionId": "Group.Membership.Add",
+  "displayName": "Add a user to a security group",
+  "domain": "IdentityAccess",
+  "risk": "Identity",
+  "consequenceTier": "HIGH",
+  "targetSystem": "IAM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "userPrincipalName",
+      "groupId"
+    ],
+    "properties": {
+      "userPrincipalName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "groupId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      }
+    }
+  }
+}

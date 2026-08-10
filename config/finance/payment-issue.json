@@ -1,0 +1,19 @@
+{
+  "actionId": "Payment.Issue",
+  "displayName": "Issue a vendor payment",
+  "domain": "Finance",
+  "risk": "Financial",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "FINANCE_AP",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["invoiceNumber", "vendorCode", "amount", "currency"],
+    "properties": {
+      "invoiceNumber": { "type": "string", "minLength": 1, "maxLength": 30 },
+      "vendorCode": { "type": "string", "minLength": 1, "maxLength": 20 },
+      "amount": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000000 },
+      "currency": { "type": "string", "const": "AED" }
+    }
+  }
+}

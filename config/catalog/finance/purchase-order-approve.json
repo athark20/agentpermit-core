@@ -1,0 +1,40 @@
+{
+  "actionId": "PurchaseOrder.Approve",
+  "displayName": "Approve a purchase order",
+  "domain": "Procurement",
+  "risk": "Financial",
+  "consequenceTier": "HIGH",
+  "targetSystem": "PROCUREMENT",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "poNumber",
+      "vendorCode",
+      "amount",
+      "currency"
+    ],
+    "properties": {
+      "poNumber": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "vendorCode": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

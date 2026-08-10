@@ -1,0 +1,34 @@
+{
+  "actionId": "Loan.Approve",
+  "displayName": "Approve a loan or credit facility",
+  "domain": "Banking",
+  "risk": "Financial",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "BANKING_CORE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "applicationId",
+      "amount",
+      "currency"
+    ],
+    "properties": {
+      "applicationId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

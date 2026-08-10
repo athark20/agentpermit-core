@@ -1,0 +1,148 @@
+namespace AgentPermit.Gateway.Persistence;
+
+/// <summary>Aggregate counts for the admin dashboard.</summary>
+public sealed class PlatformMetrics
+{
+    public int TotalRequests { get; set; }
+    public Dictionary<string, int> ByStatus { get; set; } = new();
+    public int TodayTotal { get; set; }
+    public int TodayAllowed { get; set; }
+    public int TodayDenied { get; set; }
+    public int TodayApproval { get; set; }
+    public int TodayFailed { get; set; }
+}
+
+/// <summary>One agent's activity totals over a window — the centralized fleet trail row.</summary>
+public sealed class AgentTrailRow
+{
+    public string AgentId { get; set; } = string.Empty;
+    public int Total { get; set; }
+    public int Allowed { get; set; }
+    public int StepUp { get; set; }
+    public int Denied { get; set; }
+    public int Failed { get; set; }
+    public DateTimeOffset? LastSeenUtc { get; set; }
+}
+
+/// <summary>
+/// Builds <see cref="PlatformMetrics"/> from raw (status, count) groupings, normalizing legacy status
+/// spellings (from before the canonical state machine) to canonical buckets so the dashboard is
+/// consistent regardless of when a request was recorded.
+/// </summary>
+public static class MetricsBuilder
+{
+    public static string Canonical(string? status) => (status ?? string.Empty).Trim().ToUpperInvariant() switch
+    {
+        "EXECUTED" or "SUCCEEDED" => "SUCCEEDED",
+        "PENDINGAPPROVAL" or "AWAITING_APPROVAL" => "AWAITING_APPROVAL",
+        "DENIED" => "DENIED",
+        "REJECTED" => "REJECTED",
+        "FAILED" => "FAILED",
+        "EXPIRED" => "EXPIRED",
+        "CANCELLED" or "CANCELED" => "CANCELLED",
+        var other => string.IsNullOrEmpty(other) ? "UNKNOWN" : other,
+    };
+
+    public static PlatformMetrics Build(
+        IEnumerable<(string Status, int Count)> all, IEnumerable<(string Status, int Count)> today)
+    {
+        var byStatus = Fold(all);
+        var t = Fold(today);
+        return new PlatformMetrics
+        {
+            TotalRequests = byStatus.Values.Sum(),
+            ByStatus = byStatus,
+            TodayTotal = t.Values.Sum(),
+            TodayAllowed = t.GetValueOrDefault("SUCCEEDED"),
+            TodayDenied = t.GetValueOrDefault("DENIED") + t.GetValueOrDefault("REJECTED"),
+            TodayApproval = t.GetValueOrDefault("AWAITING_APPROVAL"),
+            TodayFailed = t.GetValueOrDefault("FAILED"),
+        };
+    }
+
+    private static Dictionary<string, int> Fold(IEnumerable<(string Status, int Count)> rows)
+    {
+        var d = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (status, count) in rows)
+        {
+            var c = Canonical(status);
+            d[c] = d.GetValueOrDefault(c) + count;
+        }
+        return d;
+    }
+}
+
+/// <summary>Row in dbo.ActionRequest — the audit spine of every request.</summary>
+public sealed class ActionRequestRecord
+{
+    public Guid ActionRequestId { get; set; }
+    public Guid CorrelationId { get; set; }
+    public string IdempotencyKey { get; set; } = string.Empty;
+    public string? RootAgentId { get; set; }
+    public string ExecutingAgentId { get; set; } = string.Empty;
+    public string? InitiatingUserId { get; set; }
+    public string ActionId { get; set; } = string.Empty;
+    public string RequestPayloadJson { get; set; } = string.Empty;
+    public string RequestPayloadHash { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public DateTimeOffset CreatedUtc { get; set; }
+    public DateTimeOffset UpdatedUtc { get; set; }
+}
+
+/// <summary>Row in dbo.PolicyDecision — one per evaluation.</summary>
+public sealed class PolicyDecisionRecord
+{
+    public Guid PolicyDecisionId { get; set; }
+    public Guid ActionRequestId { get; set; }
+    public string Decision { get; set; } = string.Empty;
+    public string PolicyCode { get; set; } = string.Empty;
+    public string PolicyVersion { get; set; } = string.Empty;
+    public string? DecisionReason { get; set; }
+    public string? EvaluationTraceJson { get; set; }
+    public DateTimeOffset EvaluatedUtc { get; set; }
+}
+
+/// <summary>Row in dbo.ApprovalRequest — opened when a decision is REQUIRE_APPROVAL.</summary>
+public sealed class ApprovalRequestRecord
+{
+    public Guid ApprovalRequestId { get; set; }
+    public Guid ActionRequestId { get; set; }
+    public string ApprovalType { get; set; } = string.Empty;
+    public string? ApproverId { get; set; }
+    public string? ApproverRole { get; set; }
+    public string PayloadHash { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public DateTimeOffset RequestedUtc { get; set; }
+    public DateTimeOffset? ExpiresUtc { get; set; }
+    public DateTimeOffset? RespondedUtc { get; set; }
+    public string? ResponseComment { get; set; }
+}
+
+/// <summary>Row in dbo.Execution — one attempt to run the action against a target.</summary>
+public sealed class ExecutionRecord
+{
+    public Guid ExecutionId { get; set; }
+    public Guid ActionRequestId { get; set; }
+    public string AdapterCode { get; set; } = string.Empty;
+    public string? TargetResourceId { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public int AttemptNumber { get; set; }
+    public DateTimeOffset StartedUtc { get; set; }
+    public DateTimeOffset? CompletedUtc { get; set; }
+    public string? ResultJson { get; set; }
+    public string? ErrorCode { get; set; }
+    public string? ErrorMessage { get; set; }
+}
+
+/// <summary>Row in dbo.ActionReceipt — the tamper-evident, hash-chained proof.</summary>
+public sealed class ActionReceiptRecord
+{
+    public Guid ActionReceiptId { get; set; }
+    public Guid ActionRequestId { get; set; }
+    public string ReceiptNumber { get; set; } = string.Empty;
+    public string ReceiptJson { get; set; } = string.Empty;
+    public string ReceiptHash { get; set; } = string.Empty;
+    public string? PreviousReceiptHash { get; set; }
+    public string? SignatureValue { get; set; }
+    public DateTimeOffset CreatedUtc { get; set; }
+}

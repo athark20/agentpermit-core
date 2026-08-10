@@ -1,0 +1,34 @@
+{
+  "actionId": "MedicalRecord.Release",
+  "displayName": "Release / disclose a medical record to a third party",
+  "domain": "Healthcare",
+  "risk": "Compliance",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "EHR",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "patientId",
+      "recipient",
+      "justification"
+    ],
+    "properties": {
+      "patientId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "recipient": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "justification": {
+        "type": "string",
+        "minLength": 10,
+        "maxLength": 1000
+      }
+    }
+  }
+}

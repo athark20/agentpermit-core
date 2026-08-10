@@ -1,0 +1,16 @@
+{
+  "actionId": "Invoice.Lookup",
+  "displayName": "Look up an invoice",
+  "domain": "Finance",
+  "risk": "Read",
+  "consequenceTier": "LOW",
+  "targetSystem": "FINANCE_READ",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["invoiceNumber"],
+    "properties": {
+      "invoiceNumber": { "type": "string", "minLength": 1, "maxLength": 30 }
+    }
+  }
+}

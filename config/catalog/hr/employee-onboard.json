@@ -1,0 +1,40 @@
+{
+  "actionId": "Employee.Onboard",
+  "displayName": "Onboard a new employee",
+  "domain": "HR",
+  "risk": "Identity",
+  "consequenceTier": "HIGH",
+  "targetSystem": "HRIS",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "employeeId",
+      "fullName",
+      "role",
+      "startDate"
+    ],
+    "properties": {
+      "employeeId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "fullName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "role": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "startDate": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20
+      }
+    }
+  }
+}

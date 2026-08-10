@@ -1,0 +1,34 @@
+{
+  "actionId": "Beneficiary.Add",
+  "displayName": "Add a payment beneficiary",
+  "domain": "Banking",
+  "risk": "Financial",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "BANKING_CORE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "accountId",
+      "beneficiaryName",
+      "iban"
+    ],
+    "properties": {
+      "accountId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "beneficiaryName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "iban": {
+        "type": "string",
+        "minLength": 15,
+        "maxLength": 40
+      }
+    }
+  }
+}

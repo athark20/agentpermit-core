@@ -1,0 +1,28 @@
+{
+  "actionId": "AccessGrant.Standard",
+  "displayName": "Grant standard application access",
+  "domain": "IdentityAccess",
+  "risk": "Identity",
+  "consequenceTier": "MEDIUM",
+  "targetSystem": "IAM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "userPrincipalName",
+      "resource"
+    ],
+    "properties": {
+      "userPrincipalName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "resource": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      }
+    }
+  }
+}

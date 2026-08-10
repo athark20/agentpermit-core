@@ -1,0 +1,28 @@
+{
+  "actionId": "AccountFreeze.Apply",
+  "displayName": "Freeze or hold a customer account",
+  "domain": "Banking",
+  "risk": "Compliance",
+  "consequenceTier": "HIGH",
+  "targetSystem": "BANKING_CORE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "accountId",
+      "reason"
+    ],
+    "properties": {
+      "accountId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

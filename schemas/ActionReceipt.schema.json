@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentpermit.local/schemas/action-receipt.schema.json",
+  "title": "AgentPermit Action Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "receiptId",
+    "actionRequestId",
+    "agentId",
+    "actionId",
+    "decision",
+    "policyVersion",
+    "payloadHash",
+    "executionStatus",
+    "createdAtUtc"
+  ],
+  "properties": {
+    "receiptId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "actionRequestId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "agentId": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "rootAgentId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 200
+    },
+    "initiatingUserId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 200
+    },
+    "actionId": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "decision": {
+      "enum": [
+        "ALLOW",
+        "DENY",
+        "REQUIRE_APPROVAL"
+      ]
+    },
+    "policyVersion": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "payloadHash": {
+      "type": "string",
+      "pattern": "^[A-Fa-f0-9]{64}$"
+    },
+    "approvalIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "executionStatus": {
+      "type": "string",
+      "maxLength": 100
+    },
+    "targetResourceId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 500
+    },
+    "previousReceiptHash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[A-Fa-f0-9]{64}$"
+    },
+    "signature": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "createdAtUtc": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

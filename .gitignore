@@ -1,0 +1,36 @@
+# Secrets
+.env
+*.secrets.json
+*.pfx
+*.cer
+*.key
+local.settings.json
+
+# Build outputs
+bin/
+obj/
+node_modules/
+dist/
+coverage/
+
+# Power Platform
+.auth/
+*.msapp
+.powerplatform/
+
+# Tool state
+.azure/
+outputs/*.secret.json
+
+# OS / IDE
+.vscode/settings.json
+.DS_Store
+Thumbs.db
+
+# license tool build output
+tools/**/bin/
+tools/**/obj/
+
+# vendor licence keys (never commit)
+/keys/
+tools/**/keys/

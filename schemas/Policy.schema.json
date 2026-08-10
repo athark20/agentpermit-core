@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentpermit.local/schemas/policy.schema.json",
+  "title": "AgentPermit Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "policyCode",
+    "version",
+    "appliesTo",
+    "conditions",
+    "decision"
+  ],
+  "properties": {
+    "policyCode": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 200
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 50
+    },
+    "appliesTo": {
+      "type": "object",
+      "required": [
+        "actionId"
+      ],
+      "properties": {
+        "actionId": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "agentId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200
+        }
+      }
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "field",
+          "operator",
+          "value"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "operator": {
+            "enum": [
+              "equals",
+              "notEquals",
+              "greaterThan",
+              "greaterThanOrEqual",
+              "lessThan",
+              "lessThanOrEqual",
+              "in",
+              "notIn",
+              "exists"
+            ]
+          },
+          "value": {}
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "ALLOW",
+            "DENY",
+            "REQUIRE_APPROVAL"
+          ]
+        },
+        "approverRoles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          }
+        }
+      }
+    }
+  }
+}

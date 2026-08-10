@@ -1,0 +1,38 @@
+{
+  "actionId": "Payment.Batch.Release",
+  "displayName": "Release a payment run (batch of vendor payments)",
+  "domain": "Finance",
+  "risk": "Financial",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "ERP_FINANCE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "batchId",
+      "totalAmount",
+      "currency",
+      "itemCount"
+    ],
+    "properties": {
+      "batchId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "itemCount": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "totalAmount": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

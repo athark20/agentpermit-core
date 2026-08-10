@@ -1,0 +1,25 @@
+# AgentPermit — local quickstart.
+# Runs the enforcement gateway standalone: in-memory storage, no Azure, no APIM.
+#   docker compose up
+# Then drive your first decision (see README "Quickstart").
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      # Standalone dev mode — nothing external required.
+      - ASPNETCORE_ENVIRONMENT=Development
+      - Persistence__Provider=InMemory
+      - Security__EnforceIdentityBinding=false
+      # A demo admin key so you can call the admin API locally (change for any real use).
+      - Admin__ApiKey=dev-admin-key
+      # Point the built-in refund simulator at the gateway itself, so an ALLOW executes end-to-end.
+      - Simulator__BaseUrl=http://localhost:8080
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 5

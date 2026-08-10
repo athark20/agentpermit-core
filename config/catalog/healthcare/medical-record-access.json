@@ -1,0 +1,28 @@
+{
+  "actionId": "MedicalRecord.Access",
+  "displayName": "Access a patient medical record",
+  "domain": "Healthcare",
+  "risk": "Data",
+  "consequenceTier": "HIGH",
+  "targetSystem": "EHR",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "patientId",
+      "purpose"
+    ],
+    "properties": {
+      "patientId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "purpose": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

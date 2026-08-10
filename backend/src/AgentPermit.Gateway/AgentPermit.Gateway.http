@@ -1,0 +1,6 @@
+@AgentPermit.Gateway_HostAddress = http://localhost:5201
+
+GET {{AgentPermit.Gateway_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

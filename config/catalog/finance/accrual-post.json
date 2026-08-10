@@ -1,0 +1,40 @@
+{
+  "actionId": "Accrual.Post",
+  "displayName": "Post an accrual or period adjustment",
+  "domain": "Finance",
+  "risk": "Financial",
+  "consequenceTier": "MEDIUM",
+  "targetSystem": "ERP_FINANCE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "entryRef",
+      "amount",
+      "currency",
+      "period"
+    ],
+    "properties": {
+      "entryRef": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "period": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

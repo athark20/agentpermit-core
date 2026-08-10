@@ -1,0 +1,40 @@
+{
+  "actionId": "Citizen.Record.Update",
+  "displayName": "Update an official citizen record",
+  "domain": "Government",
+  "risk": "Data",
+  "consequenceTier": "HIGH",
+  "targetSystem": "GOV",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "recordId",
+      "field",
+      "newValue",
+      "reason"
+    ],
+    "properties": {
+      "recordId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "field": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 60
+      },
+      "newValue": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

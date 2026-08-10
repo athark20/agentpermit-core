@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="260" viewBox="0 0 1100 260">
+  <g transform="translate(20 52) scale(1.22)">
+    <path d="M49 27H30V101H49" fill="none" stroke="#22D3EE" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M79 27H98V101H79" fill="none" stroke="#F8FBFF" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="64" cy="57" r="9" fill="#22D3EE"/>
+    <path d="M49 77L59 87L82 55" fill="none" stroke="#F5B942" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="200" y="133" font-family="Noto Sans, Arial, sans-serif" font-weight="700" font-size="94" letter-spacing="-3">
+    <tspan fill="#F8FBFF">Agent</tspan><tspan fill="#22D3EE">Permit</tspan>
+  </text>
+  <text x="206" y="187" font-family="Noto Sans, Arial, sans-serif" font-weight="600" font-size="24" letter-spacing="5" fill="#D9E7F2">SOVEREIGN AI AGENT GOVERNANCE</text>
+</svg>

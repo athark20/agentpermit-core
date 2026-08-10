@@ -1,0 +1,28 @@
+{
+  "actionId": "Email.External.Send",
+  "displayName": "Send an email to an external recipient",
+  "domain": "Communications",
+  "risk": "Reputational",
+  "consequenceTier": "MEDIUM",
+  "targetSystem": "EMAIL",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "to",
+      "subject"
+    ],
+    "properties": {
+      "to": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 200
+      },
+      "subject": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    }
+  }
+}

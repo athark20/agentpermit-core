@@ -1,0 +1,39 @@
+{
+  "actionId": "SalaryChange.Apply",
+  "displayName": "Change an employee salary",
+  "domain": "HR",
+  "risk": "Financial",
+  "consequenceTier": "HIGH",
+  "targetSystem": "HRIS",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "employeeId",
+      "newSalary",
+      "currency",
+      "effectiveDate"
+    ],
+    "properties": {
+      "employeeId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "newSalary": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      },
+      "effectiveDate": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20
+      }
+    }
+  }
+}

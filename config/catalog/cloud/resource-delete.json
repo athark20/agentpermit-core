@@ -1,0 +1,34 @@
+{
+  "actionId": "Cloud.Resource.Delete",
+  "displayName": "Delete a cloud resource",
+  "domain": "CloudOps",
+  "risk": "Operational",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "CLOUD",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "resourceId",
+      "resourceType",
+      "reason"
+    ],
+    "properties": {
+      "resourceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "resourceType": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 60
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

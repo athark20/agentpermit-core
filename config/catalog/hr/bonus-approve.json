@@ -1,0 +1,40 @@
+{
+  "actionId": "Bonus.Approve",
+  "displayName": "Approve a bonus payment",
+  "domain": "HR",
+  "risk": "Financial",
+  "consequenceTier": "HIGH",
+  "targetSystem": "HRIS",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "employeeId",
+      "amount",
+      "currency",
+      "reason"
+    ],
+    "properties": {
+      "employeeId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 1000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "actionId": "Subscription.Cancel",
+  "displayName": "Cancel a customer subscription",
+  "domain": "CustomerService",
+  "risk": "Operational",
+  "consequenceTier": "MEDIUM",
+  "targetSystem": "CRM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "subscriptionId",
+      "reason"
+    ],
+    "properties": {
+      "subscriptionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
+    }
+  }
+}

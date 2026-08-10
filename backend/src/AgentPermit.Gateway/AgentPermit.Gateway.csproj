@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AgentPermit.Gateway</RootNamespace>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
+    <PackageReference Include="Azure.Monitor.OpenTelemetry.AspNetCore" Version="1.3.0" />
+    <PackageReference Include="Azure.Security.KeyVault.Keys" Version="4.10.0" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.29.1" />
+    <PackageReference Include="Dapper" Version="2.1.79" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
+    <!-- Pin transitive Microsoft.OpenApi above GHSA-v5pm-xwqc-g5wc (fixed in 2.7.5) -->
+    <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Single source of truth: the repo-level action definition, copied to output as seed/first-action.json -->
+    <Content Include="..\..\..\config\first-action.json" Link="seed\first-action.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Baseline published policy snapshot (policies-as-data), copied to output as seed/policy-snapshot.json -->
+    <Content Include="..\..\..\policies\refund-baseline.snapshot.json" Link="seed\policy-snapshot.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Connector risk catalog (data), copied to output as seed/connector-risk-catalog.json -->
+    <Content Include="..\..\..\config\connector-risk-catalog.json" Link="seed\connector-risk-catalog.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Finance/AP action definitions (real-world governed agent), copied to output as seed/finance/*.json -->
+    <Content Include="..\..\..\config\finance\*.json" Link="seed\finance\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <!-- Go-to-market action catalog (by domain), copied under seed/catalog/... and scanned recursively -->
+    <Content Include="..\..\..\config\catalog\**\*.json" Link="seed\catalog\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

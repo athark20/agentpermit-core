@@ -1,0 +1,46 @@
+{
+  "actionId": "FundsTransfer.International",
+  "displayName": "Send an international / cross-border transfer",
+  "domain": "Banking",
+  "risk": "Financial",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "BANKING_CORE",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "fromAccount",
+      "toIban",
+      "swift",
+      "amount",
+      "currency"
+    ],
+    "properties": {
+      "fromAccount": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "toIban": {
+        "type": "string",
+        "minLength": 15,
+        "maxLength": 40
+      },
+      "swift": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 11
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 100000000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

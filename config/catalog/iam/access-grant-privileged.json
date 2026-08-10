@@ -1,0 +1,34 @@
+{
+  "actionId": "AccessGrant.Privileged",
+  "displayName": "Grant a privileged / admin role",
+  "domain": "IdentityAccess",
+  "risk": "Identity",
+  "consequenceTier": "CRITICAL",
+  "targetSystem": "IAM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "userPrincipalName",
+      "role",
+      "justification"
+    ],
+    "properties": {
+      "userPrincipalName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "role": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      },
+      "justification": {
+        "type": "string",
+        "minLength": 10,
+        "maxLength": 1000
+      }
+    }
+  }
+}

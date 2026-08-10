@@ -1,0 +1,40 @@
+{
+  "actionId": "Credit.Apply",
+  "displayName": "Apply a goodwill credit to a customer",
+  "domain": "CustomerService",
+  "risk": "Financial",
+  "consequenceTier": "MEDIUM",
+  "targetSystem": "CRM",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "customerId",
+      "amount",
+      "currency",
+      "reason"
+    ],
+    "properties": {
+      "customerId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 140
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      },
+      "amount": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "maximum": 50000
+      },
+      "currency": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 3
+      }
+    }
+  }
+}

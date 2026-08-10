@@ -1,0 +1,16 @@
+{
+  "actionId": "Vendor.Lookup",
+  "displayName": "Look up a vendor",
+  "domain": "Finance",
+  "risk": "Read",
+  "consequenceTier": "LOW",
+  "targetSystem": "FINANCE_READ",
+  "requestSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["vendorCode"],
+    "properties": {
+      "vendorCode": { "type": "string", "minLength": 1, "maxLength": 20 }
+    }
+  }
+}
