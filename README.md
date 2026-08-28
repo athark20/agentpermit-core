@@ -5,7 +5,8 @@
 ![Tests](https://img.shields.io/badge/tests-226%20passing-16a34a.svg)
 ![Status](https://img.shields.io/badge/status-open%20core-0b2942.svg)
 
-<img width="2200" height="520" alt="AgentPermit_Logo_Light" src="https://github.com/user-attachments/assets/7183039d-fc45-4e0d-9ce4-bf2b3083ad27" />
+
+<img width="2140" height="735" alt="AgentPermitLogo_Transparent" src="https://github.com/user-attachments/assets/68404ede-b5d7-4919-bff6-1a11523fd9a3" />
 
 
 **Every agent. Explicitly permitted.**
