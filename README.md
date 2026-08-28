@@ -6,7 +6,8 @@
 ![Status](https://img.shields.io/badge/status-open%20core-0b2942.svg)
 
 
-<img width="2140" height="735" alt="AgentPermitLogo_Transparent" src="https://github.com/user-attachments/assets/68404ede-b5d7-4919-bff6-1a11523fd9a3" />
+<img width="2048" height="484" alt="AgentPermit_Logo_Transparent" src="https://github.com/user-attachments/assets/a541c875-781e-4c68-9900-dd2a7e532a75" />
+
 
 
 **Every agent. Explicitly permitted.**
