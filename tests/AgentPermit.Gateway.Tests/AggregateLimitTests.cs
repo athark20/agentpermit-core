@@ -105,7 +105,7 @@ public sealed class AggregateLimitTests
         Assert.Equal("DENY", denied.Decision);
 
         var store = factory.Services.GetRequiredService<AgentPermit.Gateway.Persistence.IAgentPermitStore>();
-        var decision = await store.GetLatestPolicyDecisionAsync(denied.ActionRequestId, CancellationToken.None);
+        var decision = await store.GetLatestPolicyDecisionAsync(denied.ActionRequestId!.Value, CancellationToken.None);
         using var trace = JsonDocument.Parse(decision!.EvaluationTraceJson!);
         var aggregates = trace.RootElement.GetProperty("policyTrace").GetProperty("aggregates");
         var entry = Assert.Single(aggregates.EnumerateObject());
