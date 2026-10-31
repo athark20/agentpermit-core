@@ -40,7 +40,7 @@ public sealed class ReceiptChainTests
 
         // The decision receipt's content carries the reason code and kind (they are inside the signed hash).
         var stored = await factory.Services.GetRequiredService<IAgentPermitStore>()
-            .GetReceiptForRequestAsync(deny.ActionRequestId, CancellationToken.None);
+            .GetReceiptForRequestAsync(deny.ActionRequestId!.Value, CancellationToken.None);
         using var doc = JsonDocument.Parse(stored!.ReceiptJson);
         Assert.Equal("POLICY_DENY", doc.RootElement.GetProperty("reasonCode").GetString());
         Assert.Equal("DECISION", doc.RootElement.GetProperty("kind").GetString());
@@ -133,7 +133,7 @@ public sealed class ReceiptChainTests
         var b = await Post(client, RequestBuilder.Refund(100m));
 
         var store = factory.Services.GetRequiredService<IAgentPermitStore>();
-        var second = await store.GetReceiptForRequestAsync(b.ActionRequestId, CancellationToken.None);
+        var second = await store.GetReceiptForRequestAsync(b.ActionRequestId!.Value, CancellationToken.None);
         // Simulate tampering with the stored link (in-memory store hands back its live record).
         second!.PreviousReceiptHash = new string('0', 64);
 
