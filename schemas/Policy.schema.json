@@ -68,7 +68,55 @@
               "exists"
             ]
           },
-          "value": {}
+          "value": {},
+          "aggregate": {
+            "description": "When present, 'field' is aggregated over a window of recent requests (including this one) instead of read from this request alone. Yields a number, so use an ordering or equality operator.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "function",
+              "window"
+            ],
+            "properties": {
+              "function": {
+                "enum": [
+                  "sum",
+                  "count",
+                  "distinct",
+                  "max"
+                ]
+              },
+              "window": {
+                "description": "ISO-8601 duration look-back, e.g. PT1H, PT24H, P7D (max P366D).",
+                "type": "string",
+                "pattern": "^P(?!$)(\\d+Y)?(\\d+M)?(\\d+W)?(\\d+D)?(T(?=\\d)(\\d+H)?(\\d+M)?(\\d+(\\.\\d+)?S)?)?$"
+              },
+              "groupBy": {
+                "description": "Fields whose values must equal this request's for a prior request to count: agentId, rootAgentId, initiatingUserId, or any request parameter.",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]{1,100}$"
+                }
+              },
+              "actions": {
+                "description": "Action ids to aggregate across. Omit to use the rule's own action.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 200
+                }
+              },
+              "scope": {
+                "description": "committed (default): requests that ran or are pending. all: every request, including denials.",
+                "enum": [
+                  "committed",
+                  "all"
+                ]
+              }
+            }
+          }
         }
       }
     },

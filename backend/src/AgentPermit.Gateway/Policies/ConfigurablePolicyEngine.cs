@@ -7,6 +7,7 @@ namespace AgentPermit.Gateway.Policies;
 /// Evaluates the active immutable policy snapshot: builds a field context from the request,
 /// walks the applicable rules in priority order, and returns the first match — or the
 /// snapshot's default (DENY). Fully deterministic; no external state, no per-request DB call.
+/// Windowed aggregates are supplied pre-computed in the context (see <see cref="PolicyAggregateProvider"/>).
 /// </summary>
 public sealed class ConfigurablePolicyEngine(IPolicySnapshotProvider snapshots) : IPolicyEngine
 {
@@ -28,15 +29,30 @@ public sealed class ConfigurablePolicyEngine(IPolicySnapshotProvider snapshots) 
                                      || string.Equals(r.ActionId, context.Action.ActionId, StringComparison.OrdinalIgnoreCase))
                          .OrderBy(r => r.Priority))
             {
-                if (rule.Conditions.All(c => PolicyConditionEvaluator.Matches(Lookup(fields, c.Field), c.Operator, c.Value)))
-                    return Match(snapshot, version, rule);
+                if (rule.Conditions.All(c => PolicyConditionEvaluator.Matches(
+                        Resolve(fields, context, rule, c), c.Operator, c.Value)))
+                    return Match(snapshot, version, rule, context);
             }
         }
 
         return Default(snapshot, version, withinWindow);
     }
 
-    private static PolicyEvaluationResult Match(PolicySnapshot snapshot, string version, PolicyRule rule) => new()
+    /// <summary>
+    /// The value a condition compares: the request field, or — for an aggregate condition — the pre-computed
+    /// windowed value. An aggregate the provider did not compute resolves to "missing", which never satisfies
+    /// an ordering/equality operator; the provider throws rather than omit, so this only happens if a snapshot
+    /// was swapped between computation and evaluation.
+    /// </summary>
+    private static JsonElement? Resolve(
+        Dictionary<string, JsonElement> fields, PolicyEvaluationContext ctx, PolicyRule rule, PolicyCondition c)
+    {
+        if (c.Aggregate is null) return Lookup(fields, c.Field);
+        var key = c.Aggregate.Key(c.Field, rule.ActionId ?? ctx.Action.ActionId);
+        return ctx.Aggregates is not null && ctx.Aggregates.TryGetValue(key, out var v) ? v : null;
+    }
+
+    private static PolicyEvaluationResult Match(PolicySnapshot snapshot, string version, PolicyRule rule, PolicyEvaluationContext ctx) => new()
     {
         Decision = rule.Decision,
         PolicyCode = snapshot.PolicyCode,
@@ -51,7 +67,9 @@ public sealed class ConfigurablePolicyEngine(IPolicySnapshotProvider snapshots) 
             ruleName = rule.Name,
             priority = rule.Priority,
             decision = rule.Decision,
-            snapshotVersion = version
+            snapshotVersion = version,
+            // The windowed values the decision rested on — the approver / auditor can see WHY (e.g. sum = 1,200).
+            aggregates = ctx.Aggregates is { Count: > 0 } ? ctx.Aggregates : null
         })
     };
 

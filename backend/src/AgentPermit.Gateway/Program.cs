@@ -149,6 +149,9 @@ builder.Services.AddSingleton<IPublishablePolicySnapshotProvider>(sp => new Publ
 builder.Services.AddSingleton<IPolicySnapshotProvider>(sp => sp.GetRequiredService<IPublishablePolicySnapshotProvider>());
 builder.Services.AddSingleton<IPolicyPublisher, PolicyPublisher>();
 builder.Services.AddSingleton<IPolicyEngine, ConfigurablePolicyEngine>();
+// Computes the windowed aggregates (sum/count/distinct/max over a look-back) that limit rules reference,
+// before the synchronous engine runs. No aggregate rules in the snapshot => no store call per request.
+builder.Services.AddScoped<PolicyAggregateProvider>();
 // Applies each agent's rollout posture (OBSERVE/WARN/ENFORCE) to the computed decision, enforcing the
 // invariant that HIGH/CRITICAL-consequence actions are always binding regardless of warm-up.
 builder.Services.AddSingleton<EnforcementGate>();

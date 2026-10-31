@@ -67,6 +67,15 @@ Both front doors — REST `POST /api/actions/request` and MCP `POST /mcp` (`tool
 ### Policy engine
 Policies are **data, not code**: an immutable, versioned **`PolicySnapshot`** (priority-ordered rules; operators `equals/gt/gte/lt/lte/in/…`; default-deny). Rules match on `actionId` + parameter conditions and yield a decision + optional approver role. Changing a threshold = publishing a new snapshot, no redeploy.
 
+**Windowed aggregates (limits, not just thresholds).** A condition may carry an `aggregate`, which makes it read the field *summed / counted / de-duplicated / maximised over a look-back window* instead of from this request alone — including the request being decided:
+
+```jsonc
+{ "field": "amount", "operator": "greaterThan", "value": 50000,
+  "aggregate": { "function": "sum", "window": "PT24H", "groupBy": ["agentId", "customerId"] } }
+```
+
+This is what closes salami-slicing: a per-request limit of 1,000 says nothing about a hundred 999s. `groupBy` scopes the window to what must match this request (`agentId`, `rootAgentId`, `initiatingUserId`, or any request parameter such as a customer or beneficiary), `actions` aggregates across several actions, and `scope` chooses committed exposure (ran or pending — the default) or every request including denials. Values are computed once per distinct spec, before the synchronous engine runs, by `PolicyAggregateProvider`; **a snapshot with no aggregate conditions makes no store call at all**, so the engine keeps its per-request cost for everyone else. Aggregates are validated at publish time (function, ISO-8601 window, group-by and field names, numeric operator) and the computed values are written into the decision trace, so an auditor sees the number the verdict rested on. Failure is closed: a store error fails the request rather than letting a limit rule evaluate against a missing value. Under true concurrency two requests can read the same prior total, so the velocity breakers remain the hard backstop.
+
 ### Policy publisher (signed, live-swappable)
 `POST /api/policies/publish` validates → hashes → **RS256-signs in Key Vault** → writes an immutable versioned snapshot to Blob → atomically swaps the runtime-active snapshot. On startup the gateway loads and **re-verifies the signature**; a tampered snapshot is refused. The plain-language **Rules** editor in the console produces these snapshots.
 
@@ -152,3 +161,4 @@ All three resolve identity from the same APIM-forwarded headers and run the same
 | Tampered policy | Signed snapshots, re-verified at load; tampered = refused |
 | Runaway agent / emergency | Velocity breaker + global kill switch, ahead of policy |
 | Agent probes a block (retries around a refusal, tries other actions/parameters, mis-asserts identity) | Deny-velocity breaker → automatic per-agent quarantine until an admin lifts it; unresolved identities never count |
+| Salami-slicing under a per-request limit (100 × 999 instead of one 99,900); fan-out across many counterparties | Windowed aggregate conditions (sum / count / distinct / max per agent, user or counterparty), enforced on the request that would breach |

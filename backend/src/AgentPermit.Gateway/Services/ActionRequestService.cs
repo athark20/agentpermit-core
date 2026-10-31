@@ -33,6 +33,7 @@ public sealed class ActionRequestService(
     IAgentRegistry agents,
     IActionRegistry actions,
     IPolicyEngine policy,
+    PolicyAggregateProvider aggregateProvider,
     EnforcementGate enforcement,
     SafetyGate safety,
     ITargetSystemRegistry targets,
@@ -229,6 +230,13 @@ public sealed class ActionRequestService(
                 ReasonCode.InvalidParameters, string.Join("; ", paramErrors), ct, executingAgentId);
         }
 
+        // --- Compute any windowed aggregates this snapshot's rules reference for this action ---
+        // Returns null (and makes no store call) when no rule uses one, so the engine keeps its "no
+        // per-request DB call" property for snapshots that don't aggregate. Fails closed: a store error
+        // surfaces rather than letting a limit rule evaluate against a missing value.
+        var aggregates = await aggregateProvider.ComputeAsync(
+            action, dto.Parameters, executingAgentId, dto.RootAgentId, dto.InitiatingUserId, ct);
+
         // --- Evaluate policy (against the active immutable snapshot) ---
         var computed = policy.Evaluate(new PolicyEvaluationContext
         {
@@ -236,7 +244,8 @@ public sealed class ActionRequestService(
             Parameters = dto.Parameters,
             AgentId = executingAgentId,
             RootAgentId = dto.RootAgentId,
-            InitiatingUserId = dto.InitiatingUserId
+            InitiatingUserId = dto.InitiatingUserId,
+            Aggregates = aggregates
         });
 
         // --- Apply the agent's rollout posture (secure-by-default warm-up gate) ---

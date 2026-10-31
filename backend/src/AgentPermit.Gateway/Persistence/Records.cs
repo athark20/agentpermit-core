@@ -72,6 +72,26 @@ public static class MetricsBuilder
     }
 }
 
+/// <summary>
+/// A windowed look-back over dbo.ActionRequest for policy aggregates: "values of <see cref="ValueField"/> in
+/// requests for these actions since <see cref="Since"/>, in these statuses, that share these group-by values".
+/// Field names are validated by the caller (<c>^[A-Za-z0-9_.-]+$</c>); stores must still parameterise values.
+/// </summary>
+public sealed class AggregateQuery
+{
+    public required string[] ActionIds { get; init; }
+    public required DateTimeOffset Since { get; init; }
+    /// <summary>Null = any status.</summary>
+    public string[]? Statuses { get; init; }
+    public string? AgentId { get; init; }
+    public string? RootAgentId { get; init; }
+    public string? InitiatingUserId { get; init; }
+    /// <summary>Request parameters that must equal these values (top-level JSON properties of the payload).</summary>
+    public IReadOnlyDictionary<string, string> ParameterEquals { get; init; } = new Dictionary<string, string>();
+    /// <summary>Top-level payload property whose value to return per matching row; null = return one null per row (count only).</summary>
+    public string? ValueField { get; init; }
+}
+
 /// <summary>Row in dbo.ActionRequest — the audit spine of every request.</summary>
 public sealed class ActionRequestRecord
 {

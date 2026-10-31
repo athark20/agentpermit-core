@@ -114,6 +114,36 @@ public sealed class SqlAgentPermitStore(string connectionString) : IAgentPermitS
         return row?.Map();
     }
 
+    public async Task<IReadOnlyList<string?>> ListParameterValuesAsync(AggregateQuery q, CancellationToken ct)
+    {
+        // Field names are validated upstream (^[A-Za-z0-9_.-]+$) and are only ever used inside a JSON path
+        // literal; every VALUE is a parameter. JSON_VALUE returns nvarchar(4000), so numbers come back in
+        // their JSON text form and are parsed by the caller.
+        var p = new DynamicParameters();
+        p.Add("actions", q.ActionIds);
+        p.Add("since", q.Since.UtcDateTime);
+        var sql = new System.Text.StringBuilder();
+        sql.Append(q.ValueField is null
+            ? "SELECT CAST(NULL AS nvarchar(4000)) AS V"
+            : $"SELECT JSON_VALUE(RequestPayloadJson, '$.\"{q.ValueField}\"') AS V");
+        sql.Append(" FROM dbo.ActionRequest WHERE ActionId IN @actions AND CreatedUtc >= @since");
+        if (q.Statuses is { Length: > 0 }) { sql.Append(" AND Status IN @statuses"); p.Add("statuses", q.Statuses); }
+        if (q.AgentId is not null) { sql.Append(" AND ExecutingAgentId = @agent"); p.Add("agent", q.AgentId); }
+        if (q.RootAgentId is not null) { sql.Append(" AND ISNULL(RootAgentId, '') = @root"); p.Add("root", q.RootAgentId); }
+        if (q.InitiatingUserId is not null) { sql.Append(" AND ISNULL(InitiatingUserId, '') = @user"); p.Add("user", q.InitiatingUserId); }
+        var i = 0;
+        foreach (var (name, value) in q.ParameterEquals)
+        {
+            var pn = $"pv{i++}";
+            sql.Append($" AND JSON_VALUE(RequestPayloadJson, '$.\"{name}\"') = @{pn}");
+            p.Add(pn, value);
+        }
+
+        await using var c = Open();
+        var rows = await c.QueryAsync<string?>(sql.ToString(), p);
+        return rows.ToList();
+    }
+
     public async Task InsertActionRequestAsync(ActionRequestRecord r, CancellationToken ct)
     {
         await using var c = Open();

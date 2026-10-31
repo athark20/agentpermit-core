@@ -3,6 +3,59 @@ using System.Text.Json.Serialization;
 
 namespace AgentPermit.Gateway.Policies;
 
+/// <summary>
+/// Turns a condition from "this request's field" into "this field aggregated over recent requests".
+/// <c>{ field: "amount", operator: "greaterThan", value: 5000, aggregate: { function: "sum", window: "PT24H", groupBy: ["agentId","customerId"] } }</c>
+/// reads: the sum of <c>amount</c> over the last 24 h for this agent and this customer — <em>including the
+/// current request</em> — is greater than 5000. This is what stops salami-slicing: a per-request threshold of
+/// 1,000 says nothing about a hundred 999s.
+/// </summary>
+public sealed class PolicyAggregate
+{
+    public const string Sum = "sum";
+    public const string Count = "count";
+    public const string Distinct = "distinct";
+    public const string Max = "max";
+    public static readonly string[] Functions = { Sum, Count, Distinct, Max };
+
+    public const string ScopeCommitted = "committed";
+    public const string ScopeAll = "all";
+    public static readonly string[] Scopes = { ScopeCommitted, ScopeAll };
+
+    /// <summary>sum | count | distinct | max. <c>count</c> ignores the field; <c>distinct</c> counts distinct field values.</summary>
+    [JsonPropertyName("function")]
+    public string Function { get; set; } = Sum;
+
+    /// <summary>Look-back window as an ISO-8601 duration (PT1H, PT24H, P7D).</summary>
+    [JsonPropertyName("window")]
+    public string Window { get; set; } = "PT24H";
+
+    /// <summary>
+    /// Fields whose values must equal the current request's to count: <c>agentId</c>, <c>initiatingUserId</c>,
+    /// <c>rootAgentId</c>, or any request parameter name (e.g. <c>customerId</c>, <c>toIban</c>). Default: agentId.
+    /// </summary>
+    [JsonPropertyName("groupBy")]
+    public string[] GroupBy { get; set; } = { "agentId" };
+
+    /// <summary>Action ids to aggregate across. Default (null): only the rule's own action.</summary>
+    [JsonPropertyName("actions")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string[]? Actions { get; set; }
+
+    /// <summary>
+    /// <c>committed</c> (default): requests that ran or are pending (SUCCEEDED, EXECUTING, EXECUTION_PENDING,
+    /// APPROVED, AWAITING_APPROVAL) — i.e. real or pending exposure. <c>all</c>: every request including
+    /// denials — useful to throttle an agent that keeps asking.
+    /// </summary>
+    [JsonPropertyName("scope")]
+    public string Scope { get; set; } = ScopeCommitted;
+
+    /// <summary>Canonical key for this aggregate over <paramref name="field"/> (dedupes identical specs within a snapshot).</summary>
+    public string Key(string field, string ruleActionId) =>
+        $"agg:{Function.ToLowerInvariant()}:{field}:{Window}:{string.Join(',', GroupBy ?? Array.Empty<string>())}:" +
+        $"{string.Join(',', Actions ?? new[] { ruleActionId })}:{Scope.ToLowerInvariant()}";
+}
+
 /// <summary>One deterministic condition, e.g. { field: "amount", operator: "lessThan", value: 250 }.</summary>
 public sealed class PolicyCondition
 {
@@ -15,6 +68,14 @@ public sealed class PolicyCondition
     /// <summary>Comparison value as raw JSON (number, string, boolean, or array for in/notIn).</summary>
     [JsonPropertyName("value")]
     public JsonElement Value { get; set; }
+
+    /// <summary>
+    /// When present, <see cref="Field"/> is aggregated over a window of recent requests instead of read from
+    /// this request alone. Omitted when null so snapshots signed before this existed still hash identically.
+    /// </summary>
+    [JsonPropertyName("aggregate")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PolicyAggregate? Aggregate { get; set; }
 }
 
 /// <summary>
