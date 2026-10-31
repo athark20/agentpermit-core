@@ -75,6 +75,11 @@ public sealed class HttpTeamsNotifier(HttpClient http, TeamsOptions options, ILo
             amount = Num("amount"),
             currency = Str("currency"),
             reason = Str("reason"),
+            // The COMPLETE payload, so the card can list every field the approver is signing off on
+            // (a bank-detail change must show the account being approved, not just an amount).
+            parameters = p.Clone(),
+            initiatingUserId = request.InitiatingUserId,
+            approverRole = approval.ApproverRole,
             payloadHash = approval.PayloadHash,
             requestedAtUtc = approval.RequestedUtc,
             expiresAtUtc = approval.ExpiresUtc,

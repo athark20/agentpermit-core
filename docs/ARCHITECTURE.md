@@ -88,6 +88,8 @@ Every execution produces an `ActionReceipt`: canonical content hash, **RS256 sig
 ### Approvals (human-in-the-loop)
 A REQUIRE_APPROVAL decision opens an approval with a **frozen payload hash**. Approve → re-verify hash → execute (dup-guarded) → receipt. Reject → no execution. Tampered payload at approval time → **409 `PayloadChanged`**. Sign-off happens in the console ("Things needing you") and/or a Teams card.
 
+**Who may decide.** The approver's identity is derived from the authenticated caller. Two checks run before anything else: (1) **approver role** — when the matched rule names an approver role (`approverRoles: ["FinanceController"]`), the approver must be a member of the **approver group** of that name (`/api/admin/approver-groups`); with `Approval:RequireNamedApproverGroups=true` a missing group fails closed (**403 `ApproverRoleRequired`**), otherwise it falls back to the generic Approver persona with a warning. (2) **Separation of duties** — the approver may not be the request's `initiatingUserId` nor the agent's registered owner (**403 `SeparationOfDuties`**). The approval summary and the Teams payload carry the **complete frozen payload**, so the approver sees every field they are signing (a bank-detail change shows the account, not just an amount).
+
 ### Always-on safety net
 Independent of policy and warm-up, checked as soon as the agent is known: a **global kill switch** (freeze → `SYSTEM_FROZEN`), a **per-agent quarantine** (`AGENT_QUARANTINED`, persisted, lifted by an admin), a **per-agent execution-velocity breaker** (`CIRCUIT_BREAKER`, too many ALLOWs in a window) and a **deny-velocity breaker** (too many denials in a window → automatic quarantine). The deny-velocity breaker exists because the 2026 incident record shows agents treating a refusal as a puzzle to solve: identity mismatches, unknown actions, schema failures, idempotency misuse and policy denials for a *resolved* agent all count; denials of an unresolved identity do not, so an unauthenticated probe can never quarantine a real agent by claiming its name. Safety-layer denials are stored as `GATEWAY_SAFETY` observations and are excluded from rollout evidence, so rejected traffic can't earn an agent a promotion.
 
@@ -141,6 +143,7 @@ All three resolve identity from the same APIM-forwarded headers and run the same
 | Agent calls the target directly, around the gateway | Target-side identity lockdown + auto-DLP; `NOT_FROM_APIM` on direct hits |
 | Replay / double execution | Caller-owned idempotency + dup-guarded execution |
 | Payload swapped between request and approval | Frozen payload hash; `PayloadChanged` → 409 |
+| Wrong person approves (any Approver signs a Finance Controller decision; initiator approves own request; owner approves own agent) | Approver groups matched to the rule's role; separation-of-duties checks; full payload shown to the approver |
 | Tampered evidence | RS256 signatures + hash chain; offline verifiable |
 | Tampered policy | Signed snapshots, re-verified at load; tampered = refused |
 | Runaway agent / emergency | Velocity breaker + global kill switch, ahead of policy |

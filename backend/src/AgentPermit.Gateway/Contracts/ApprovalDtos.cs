@@ -29,6 +29,17 @@ public sealed class ApprovalSummaryDto
     [JsonPropertyName("reason")]
     public string? Reason { get; set; }
 
+    /// <summary>
+    /// The COMPLETE frozen request payload — every parameter, not just the refund-shaped quartet above. An
+    /// approver signs off on this; a bank-detail change must show the IBAN being approved.
+    /// </summary>
+    [JsonPropertyName("parameters")]
+    public System.Text.Json.JsonElement? Parameters { get; set; }
+
+    /// <summary>The human on whose behalf the agent acted, if the request carried one (separation of duties).</summary>
+    [JsonPropertyName("initiatingUserId")]
+    public string? InitiatingUserId { get; set; }
+
     [JsonPropertyName("status")]
     public string Status { get; set; } = string.Empty;
 
@@ -97,4 +108,10 @@ public static class ApprovalOutcome
     public const string AlreadyDecided = "AlreadyDecided";
     public const string NotFound = "NotFound";
     public const string Failed = "Failed";
+
+    /// <summary>The approver is not a member of the approver group the rule requires.</summary>
+    public const string ApproverRoleRequired = "ApproverRoleRequired";
+
+    /// <summary>The approver is the person who initiated the request or owns the agent — four-eyes violated.</summary>
+    public const string SeparationOfDuties = "SeparationOfDuties";
 }

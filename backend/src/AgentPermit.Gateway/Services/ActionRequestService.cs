@@ -13,6 +13,14 @@ namespace AgentPermit.Gateway.Services;
 public sealed class ApprovalOptions
 {
     public int ExpiryHours { get; set; } = 24;
+
+    /// <summary>
+    /// When true, an approval whose rule names an approver role (e.g. "FinanceController") can only be decided
+    /// by a member of an approver group with that name — and if no such group is defined, nobody can decide it
+    /// (fail closed). When false (default, for backwards compatibility), a missing group falls back to the
+    /// generic Approver persona with a warning in the log. Set to true in production.
+    /// </summary>
+    public bool RequireNamedApproverGroups { get; set; } = false;
 }
 
 /// <summary>

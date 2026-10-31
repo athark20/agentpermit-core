@@ -12,11 +12,20 @@ interface Approval {
   currency?: string
   customerId?: string
   reason?: string
+  /** The complete frozen payload — every field the approver is signing off on. */
+  parameters?: Record<string, unknown>
+  initiatingUserId?: string
   status: string
   approverRole?: string
   payloadHash: string
   requestedAtUtc: string
   expiresAtUtc?: string
+}
+
+function fmt(v: unknown): string {
+  if (v == null) return '—'
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
 }
 
 export function Approvals() {
@@ -76,10 +85,24 @@ export function Approvals() {
           }>
           <KV label="Agent">{open.agentId}</KV>
           <KV label="Action">{open.actionId}</KV>
-          <KV label="Amount">{open.amount != null ? `${open.currency ?? ''} ${open.amount}` : '—'}</KV>
-          <KV label="Customer">{open.customerId ?? '—'}</KV>
-          <KV label="Reason">{open.reason ?? '—'}</KV>
-          <KV label="Approver role">{open.approverRole ?? '—'}</KV>
+          <KV label="Requested by">{open.initiatingUserId ?? '— (no initiating user recorded)'}</KV>
+          <KV label="Approver role">{open.approverRole ?? '— (any approver)'}</KV>
+          <h4 className="muted" style={{ margin: '12px 0 4px' }}>What you are approving — every field</h4>
+          {open.parameters && Object.keys(open.parameters).length > 0 ? (
+            <table className="table">
+              <tbody>
+                {Object.entries(open.parameters).map(([k, v]) => (
+                  <tr key={k}><td className="muted" style={{ width: '38%' }}>{k}</td><td className="mono">{fmt(v)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <>
+              <KV label="Amount">{open.amount != null ? `${open.currency ?? ''} ${open.amount}` : '—'}</KV>
+              <KV label="Customer">{open.customerId ?? '—'}</KV>
+              <KV label="Reason">{open.reason ?? '—'}</KV>
+            </>
+          )}
           <KV label="Status"><StatusPill s={open.status} /></KV>
           <KV label="Requested">{new Date(open.requestedAtUtc).toLocaleString()}</KV>
           <KV label="Expires">{open.expiresAtUtc ? new Date(open.expiresAtUtc).toLocaleString() : '—'}</KV>
