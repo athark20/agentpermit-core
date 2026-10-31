@@ -153,24 +153,31 @@ public sealed class InMemoryAgentPermitStore : IAgentPermitStore
         return Task.CompletedTask;
     }
 
-    public Task<string?> GetLatestReceiptHashAsync(CancellationToken ct)
+    private long _latestSequence = -1;
+
+    public Task<ReceiptChainHead> GetReceiptChainHeadAsync(CancellationToken ct)
     {
-        lock (_chainLock) return Task.FromResult(_latestReceiptHash);
+        lock (_chainLock) return Task.FromResult(new ReceiptChainHead(_latestReceiptHash, _latestSequence));
     }
 
     public Task<ActionReceiptRecord?> GetReceiptForRequestAsync(Guid actionRequestId, CancellationToken ct)
     {
+        // Prefer the EXECUTION receipt; otherwise the latest DECISION receipt.
         var match = _receipts.Values
             .Where(r => r.ActionRequestId == actionRequestId)
-            .OrderByDescending(r => r.CreatedUtc)
+            .OrderBy(r => r.Kind == Domain.ReceiptKind.Execution ? 0 : 1)
+            .ThenByDescending(r => r.SequenceNumber)
             .FirstOrDefault();
         return Task.FromResult(match);
     }
 
+    public Task<ActionReceiptRecord?> GetReceiptBySequenceAsync(long sequenceNumber, CancellationToken ct)
+        => Task.FromResult(_receipts.Values.FirstOrDefault(r => r.SequenceNumber == sequenceNumber));
+
     public Task<IReadOnlyList<ActionReceiptRecord>> ListRecentReceiptsAsync(int take, CancellationToken ct)
     {
         IReadOnlyList<ActionReceiptRecord> recent = _receipts.Values
-            .OrderByDescending(r => r.CreatedUtc)
+            .OrderByDescending(r => r.SequenceNumber)
             .Take(take <= 0 ? 50 : take)
             .ToList();
         return Task.FromResult(recent);
@@ -180,8 +187,15 @@ public sealed class InMemoryAgentPermitStore : IAgentPermitStore
     {
         lock (_chainLock)
         {
+            // Mirror the SQL unique constraints: the record must extend the CURRENT head, or it is a fork.
+            if (!string.Equals(record.PreviousReceiptHash, _latestReceiptHash, StringComparison.OrdinalIgnoreCase)
+                || record.SequenceNumber != _latestSequence + 1)
+                throw new ReceiptChainConflictException(
+                    $"Receipt chain conflict: expected previous hash '{_latestReceiptHash}' / sequence {_latestSequence + 1}, " +
+                    $"got '{record.PreviousReceiptHash}' / {record.SequenceNumber}.");
             _receipts[record.ActionReceiptId] = record;
             _latestReceiptHash = record.ReceiptHash;
+            _latestSequence = record.SequenceNumber;
         }
         return Task.CompletedTask;
     }

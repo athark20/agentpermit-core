@@ -54,7 +54,7 @@ Agent → APIM (authn, identity, schema) → Gateway:
   6. Enforcement gate      apply rollout posture; HIGH/CRITICAL always binding
   7. Approval workflow     (if REQUIRE_APPROVAL) freeze payload hash, await human
   8. Execution (adapter)   run against the target system (SQL / REST / delegated)
-  9. Signed receipt        RS256 sign in Key Vault; hash-chain to previous receipt
+  9. Signed receipt        RS256 sign in Key Vault; sequence + hash-chain; DECISION receipts for DENY / ASK too
 → response: decision, status, receipt, result data, correlation id
 ```
 
@@ -83,7 +83,9 @@ The caller supplies a unique `idempotencyKey` (≥ 8 chars). Same key + same pay
 The gateway is the **only** holder of downstream credentials. `IActionAdapter` implementations run the action against a target resolved from the registry: a real **SQL adapter**, a production **REST adapter**, and a **delegated adapter** (routes through Power Automate / Logic Apps to reach 1400+ Microsoft connectors). Target-side business rules (e.g., "vendor on hold") surface as a clean `ALLOW / status: FAILED` — defense in depth — not a crash.
 
 ### Signed receipts (evidence)
-Every execution produces an `ActionReceipt`: canonical content hash, **RS256 signature created in Key Vault** (private key never exported), `previousReceiptHash` (hash-chained), signing key id. A verify endpoint recomputes the canonical hash and verifies the signature offline. This is the audit artifact.
+Every **verdict** of a resolved agent produces an `ActionReceipt`, not only every execution: an **EXECUTION** receipt when the gateway ran the action, a **DECISION** receipt for a DENY or REQUIRE_APPROVAL (with the reason code inside the signed content). What an agent *tried* is in the same tamper-evident chain as what it did — the evidence every 2026 incident post-mortem was missing. (`Receipts:SignDecisions=false` turns decision receipts off if signing cost matters more.) Unresolved-identity probes are audited but not signed, so an anonymous caller cannot grow the chain.
+
+Each receipt carries a canonical content hash, an **RS256 signature created in Key Vault** (private key never exported), the signing key id, `previousReceiptHash` and a **`sequenceNumber`** (genesis 0, strictly +1). Chaining is **serialised**: a single-writer gate per replica, and across replicas `UNIQUE (SequenceNumber)` plus a filtered `UNIQUE (PreviousReceiptHash)` in SQL — a writer that loses the race gets a conflict, re-reads the head and retries, so two replicas can never fork the chain. The verify endpoint recomputes the canonical hash, verifies the signature, and checks **continuity** (the receipt's predecessor at `sequence − 1` hashes to its `previousReceiptHash`). The shape is aligned with the IETF SCITT AI-agent action-receipt draft (sequence + previous-hash chain, verdict tokens) so receipts can later be registered with a transparency service.
 
 ### Approvals (human-in-the-loop)
 A REQUIRE_APPROVAL decision opens an approval with a **frozen payload hash**. Approve → re-verify hash → execute (dup-guarded) → receipt. Reject → no execution. Tampered payload at approval time → **409 `PayloadChanged`**. Sign-off happens in the console ("Things needing you") and/or a Teams card.
@@ -145,6 +147,8 @@ All three resolve identity from the same APIM-forwarded headers and run the same
 | Payload swapped between request and approval | Frozen payload hash; `PayloadChanged` → 409 |
 | Wrong person approves (any Approver signs a Finance Controller decision; initiator approves own request; owner approves own agent) | Approver groups matched to the rule's role; separation-of-duties checks; full payload shown to the approver |
 | Tampered evidence | RS256 signatures + hash chain; offline verifiable |
+| Deleted or forked evidence (a receipt removed between two others; two replicas appending to the same head) | Sequence numbers in the signed content; unique sequence + previous-hash constraints; verifier checks continuity |
+| Attempts not evidenced (only successes were signed) | DECISION receipts for DENY / REQUIRE_APPROVAL of a resolved agent |
 | Tampered policy | Signed snapshots, re-verified at load; tampered = refused |
 | Runaway agent / emergency | Velocity breaker + global kill switch, ahead of policy |
 | Agent probes a block (retries around a refusal, tries other actions/parameters, mis-asserts identity) | Deny-velocity breaker → automatic per-agent quarantine until an admin lifts it; unresolved identities never count |
