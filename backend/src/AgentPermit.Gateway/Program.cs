@@ -185,10 +185,16 @@ builder.Services.AddHostedService<ObservationIngestionService>();
 // Independent of policy and warm-up — a runaway or an emergency stop is a hard deny.
 var breakerOptions = builder.Configuration.GetSection("CircuitBreaker").Get<CircuitBreakerOptions>() ?? new CircuitBreakerOptions();
 var killSwitchOptions = builder.Configuration.GetSection("KillSwitch").Get<KillSwitchOptions>() ?? new KillSwitchOptions();
+// Deny-velocity breaker + per-agent quarantine: an agent refused too often in a short window is probing a
+// block, not doing business. Trip -> sticky quarantine (AGENT_QUARANTINED) until an admin lifts it.
+var denyBreakerOptions = builder.Configuration.GetSection("DenyBreaker").Get<DenyBreakerOptions>() ?? new DenyBreakerOptions();
 builder.Services.AddSingleton(breakerOptions);
 builder.Services.AddSingleton(killSwitchOptions);
+builder.Services.AddSingleton(denyBreakerOptions);
 builder.Services.AddSingleton<KillSwitchService>();
+builder.Services.AddSingleton<QuarantineService>();
 builder.Services.AddSingleton<CircuitBreaker>();
+builder.Services.AddSingleton<DenyVelocityBreaker>();
 builder.Services.AddSingleton<SafetyGate>();
 
 // --- Persistence: in-memory for local/smoke, Azure SQL when configured ---

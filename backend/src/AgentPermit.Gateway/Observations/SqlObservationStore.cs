@@ -50,9 +50,9 @@ public sealed class SqlObservationStore(string connectionString) : IObservationS
                 MIN(OccurredUtc)                                                AS FirstObservedUtc,
                 MAX(OccurredUtc)                                                AS LastObservedUtc
             FROM dbo.Observation
-            WHERE AgentId = @agentId AND OccurredUtc >= @since;
+            WHERE AgentId = @agentId AND OccurredUtc >= @since AND Source <> @safety;
             """,
-            new { agentId, since = since.UtcDateTime });
+            new { agentId, since = since.UtcDateTime, safety = ObservationSource.GatewaySafety });
 
         int I(object? v) => v is null ? 0 : Convert.ToInt32(v);
         DateTimeOffset? D(object? v) => v is DateTime dt ? new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)) : null;
@@ -68,6 +68,14 @@ public sealed class SqlObservationStore(string connectionString) : IObservationS
             FirstObservedUtc = D(row?.FirstObservedUtc),
             LastObservedUtc = D(row?.LastObservedUtc)
         };
+    }
+
+    public async Task<int> CountDenialsAsync(string agentId, DateTimeOffset since, CancellationToken ct)
+    {
+        await using var c = Open();
+        return await c.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Observation WHERE AgentId = @agentId AND OccurredUtc >= @since AND EffectiveDecision = 'DENY'",
+            new { agentId, since = since.UtcDateTime });
     }
 
     public async Task<IReadOnlyList<ObservationRecord>> ListForAgentAsync(string agentId, int limit, CancellationToken ct)
