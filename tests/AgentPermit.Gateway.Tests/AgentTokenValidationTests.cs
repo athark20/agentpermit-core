@@ -174,7 +174,7 @@ public sealed class AgentTokenValidationTests
             ["agentId"] = RequestBuilder.RegisteredAgentId,
             ["idempotencyKey"] = $"idem-{Guid.NewGuid():N}",
             ["initiatingUserId"] = "someone.else@contoso.com",
-            ["parameters"] = new { customerId = "C1", amount = 100m, currency = "AED", reason = "x" }
+            ["parameters"] = new { customerId = "C1", amount = 100m, currency = "AED", reason = "Service failure" }
         };
 
         var result = await SendAsync(factory.CreateClient(),
@@ -196,7 +196,7 @@ public sealed class AgentTokenValidationTests
             ["agentId"] = RequestBuilder.RegisteredAgentId,
             ["idempotencyKey"] = $"idem-{Guid.NewGuid():N}",
             ["initiatingUserId"] = "Dana@Contoso.com",
-            ["parameters"] = new { customerId = "C1", amount = 100m, currency = "AED", reason = "x" }
+            ["parameters"] = new { customerId = "C1", amount = 100m, currency = "AED", reason = "Service failure" }
         };
 
         var result = await SendAsync(factory.CreateClient(),
@@ -223,7 +223,7 @@ public sealed class AgentTokenValidationTests
                 arguments = new
                 {
                     agentId = RequestBuilder.RegisteredAgentId,
-                    customerId = "C1", amount = 100m, currency = "AED", reason = "x",
+                    customerId = "C1", amount = 100m, currency = "AED", reason = "Service failure",
                     idempotencyKey = $"mcp-{Guid.NewGuid():N}"
                 }
             }
