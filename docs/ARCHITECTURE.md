@@ -85,6 +85,10 @@ Each action/target carries a **consequence tier** (LOW/MEDIUM/HIGH/CRITICAL), cl
 ### Identity binding
 APIM forwards the authenticated app id (`azp`) as `X-Agent-Client-Id`; the gateway resolves the registered agent from it. A body `agentId` that disagrees → **DENY `AGENT_IDENTITY_MISMATCH`**. A shared connector may assert a specific agent's badge (`agentIdentity`), trusted only when the caller is a registered connector app. Direct-to-backend calls lacking the APIM-origin secret → **DENY `NOT_FROM_APIM`**.
 
+**Gateway-side token validation (`Security:AgentAuth`).** Configure an authority + audience and the gateway validates the **agent's own bearer token itself** — signature, issuer, audience, lifetime — on both front doors. The agent is then the validated token's `azp`/`appid` and the forwarded header is ignored, so a leaked APIM shared secret, or an ingress reachable around APIM, no longer lets a caller impersonate a registered agent. Rules once configured: a token that is **presented and rejected** is always **DENY `TOKEN_INVALID`** (never downgraded to the header path); a **missing** token is refused too once `Required` is on, so a fleet can migrate agent by agent; and a **body `agentId` is never an identity** — the local/dev fallback is off whenever token validation is configured.
+
+A **delegated** token also yields the verified human: `preferred_username`/`upn`, else a delegated-scope token's `oid` (an app-only token's `oid` is the service principal's and is *not* treated as a user, honouring `idtyp=app`). That becomes `initiatingUserId`, which is what separation-of-duties checks rest on; a body value that disagrees → **DENY `INITIATING_USER_MISMATCH`**. Finally, `Security:AllowBodyAssertedAgentIdentity=false` retires the shared-connector badge once every agent has its own Entra Agent ID — a badge is an assertion the gateway cannot verify, so any agent behind that connector could otherwise claim another's rules and posture.
+
 ### Idempotency & state machine
 The caller supplies a unique `idempotencyKey` (≥ 8 chars). Same key + same payload → replay of the prior result (no double execution). Same key + **changed** payload → **DENY `IDEMPOTENCY_PAYLOAD_MISMATCH`**. Keys are an **agent-private namespace**: the lookup runs *after* identity binding and is scoped to the resolved agent (`UNIQUE (ExecutingAgentId, IdempotencyKey)`), so agent B presenting agent A's key gets its own fresh request, never A's replayed receipt, and an unauthenticated probe cannot reserve a key that a real agent will use later — unresolved-identity denials are filed under a gateway-generated key with the supplied key kept in the decision trace. Requests move through a validated canonical state machine (RECEIVED → … → SUCCEEDED/FAILED/EXPIRED/CANCELLED).
 
@@ -151,6 +155,8 @@ All three resolve identity from the same APIM-forwarded headers and run the same
 | Threat | Control |
 |---|---|
 | Agent spoofs another agent's permissions | Identity bound to authenticated token; body `agentId` must match |
+| Forged identity header (leaked APIM secret, ingress reachable around APIM) | `Security:AgentAuth` — the gateway validates the agent's token itself; the header is ignored and a rejected token is `TOKEN_INVALID` |
+| Agent claims a human it isn't acting for, to dodge separation of duties | `initiatingUserId` derived from a delegated token; a disagreeing body value is `INITIATING_USER_MISMATCH` |
 | Agent calls the target directly, around the gateway | Target-side identity lockdown + auto-DLP; `NOT_FROM_APIM` on direct hits |
 | Replay / double execution | Caller-owned idempotency + dup-guarded execution |
 | Payload swapped between request and approval | Frozen payload hash; `PayloadChanged` → 409 |
