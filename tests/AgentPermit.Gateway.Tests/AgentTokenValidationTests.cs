@@ -218,7 +218,14 @@ public sealed class AgentTokenValidationTests
             @params = new
             {
                 name = "Refund.Issue",
-                arguments = new { customerId = "C1", amount = 100m, currency = "AED", reason = "x", idempotencyKey = $"mcp-{Guid.NewGuid():N}" }
+                // agentId is part of the envelope, validated before identity: omit it and the call is
+                // rejected as malformed rather than reaching the token check we are exercising here.
+                arguments = new
+                {
+                    agentId = RequestBuilder.RegisteredAgentId,
+                    customerId = "C1", amount = 100m, currency = "AED", reason = "x",
+                    idempotencyKey = $"mcp-{Guid.NewGuid():N}"
+                }
             }
         };
 

@@ -213,7 +213,7 @@ public sealed class ActionRequestService(
             {
                 logger.LogWarning("Initiating-user spoof rejected: body '{Body}' != token '{Token}'.",
                     dto.InitiatingUserId, tokenUser);
-                await safety.RecordDenialAsync(executingAgentId, dto.ActionId!, ReasonCode.InitiatingUserMismatch, correlationId, ct);
+                // DenyAsync records the denial against the resolved agent; don't double-count it here.
                 return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
                     ReasonCode.InitiatingUserMismatch,
                     $"Body initiatingUserId '{dto.InitiatingUserId}' does not match the authenticated user.", ct, executingAgentId);
