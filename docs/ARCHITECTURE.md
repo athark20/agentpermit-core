@@ -18,7 +18,7 @@ The product's defensibility is three properties that observability tools don't h
 
 ### Enforcement contract (invariants — never weakened)
 1. **Agent identity is always required** and derived from the authenticated caller — never trusted from the request body alone.
-2. **Idempotency keys are caller-owned and required** (≥ 8 chars); the gateway never invents or derives them.
+2. **Idempotency keys are caller-owned and required** (≥ 8 chars); the gateway never invents or derives them. Keys are **private to the agent that owns them**: lookups are scoped to the resolved agent, so another agent (or an unauthenticated caller) can neither replay nor reserve them.
 3. **APIM schema validation stays on** for action requests.
 4. **High/critical-consequence actions are always binding** — never eligible for a warm-up downgrade.
 5. **External feeds are off by default** — no implicit external cost or data egress.
@@ -47,13 +47,14 @@ An action flows through a fixed, ordered pipeline. Any stage can end it.
 ```
 Agent → APIM (authn, identity, schema) → Gateway:
   1. Identity binding      resolve the agent from the token; reject spoofed agentId
-  2. Safety gate           global kill switch + per-agent velocity circuit breaker
-  3. Policy engine         evaluate signed snapshot → ALLOW / REQUIRE_APPROVAL / DENY
-  4. Enforcement gate      apply rollout posture; HIGH/CRITICAL always binding
-  5. Idempotency & state   caller-owned key; replay-safe; canonical state machine
-  6. Approval workflow     (if REQUIRE_APPROVAL) freeze payload hash, await human
-  7. Execution (adapter)   run against the target system (SQL / REST / delegated)
-  8. Signed receipt        RS256 sign in Key Vault; hash-chain to previous receipt
+  2. Idempotency           caller-owned key, scoped to the resolved agent; replay-safe
+  3. Action & schema       actionId must be catalogued; parameters validated
+  4. Safety gate           global kill switch + per-agent velocity circuit breaker
+  5. Policy engine         evaluate signed snapshot → ALLOW / REQUIRE_APPROVAL / DENY
+  6. Enforcement gate      apply rollout posture; HIGH/CRITICAL always binding
+  7. Approval workflow     (if REQUIRE_APPROVAL) freeze payload hash, await human
+  8. Execution (adapter)   run against the target system (SQL / REST / delegated)
+  9. Signed receipt        RS256 sign in Key Vault; hash-chain to previous receipt
 → response: decision, status, receipt, result data, correlation id
 ```
 
@@ -76,7 +77,7 @@ Each action/target carries a **consequence tier** (LOW/MEDIUM/HIGH/CRITICAL), cl
 APIM forwards the authenticated app id (`azp`) as `X-Agent-Client-Id`; the gateway resolves the registered agent from it. A body `agentId` that disagrees → **DENY `AGENT_IDENTITY_MISMATCH`**. A shared connector may assert a specific agent's badge (`agentIdentity`), trusted only when the caller is a registered connector app. Direct-to-backend calls lacking the APIM-origin secret → **DENY `NOT_FROM_APIM`**.
 
 ### Idempotency & state machine
-The caller supplies a unique `idempotencyKey` (≥ 8 chars). Same key + same payload → replay of the prior result (no double execution). Same key + **changed** payload → **DENY `IDEMPOTENCY_PAYLOAD_MISMATCH`**. Requests move through a validated canonical state machine (RECEIVED → … → SUCCEEDED/FAILED/EXPIRED/CANCELLED).
+The caller supplies a unique `idempotencyKey` (≥ 8 chars). Same key + same payload → replay of the prior result (no double execution). Same key + **changed** payload → **DENY `IDEMPOTENCY_PAYLOAD_MISMATCH`**. Keys are an **agent-private namespace**: the lookup runs *after* identity binding and is scoped to the resolved agent (`UNIQUE (ExecutingAgentId, IdempotencyKey)`), so agent B presenting agent A's key gets its own fresh request, never A's replayed receipt, and an unauthenticated probe cannot reserve a key that a real agent will use later — unresolved-identity denials are filed under a gateway-generated key with the supplied key kept in the decision trace. Requests move through a validated canonical state machine (RECEIVED → … → SUCCEEDED/FAILED/EXPIRED/CANCELLED).
 
 ### Execution & adapters
 The gateway is the **only** holder of downstream credentials. `IActionAdapter` implementations run the action against a target resolved from the registry: a real **SQL adapter**, a production **REST adapter**, and a **delegated adapter** (routes through Power Automate / Logic Apps to reach 1400+ Microsoft connectors). Target-side business rules (e.g., "vendor on hold") surface as a clean `ALLOW / status: FAILED` — defense in depth — not a crash.
