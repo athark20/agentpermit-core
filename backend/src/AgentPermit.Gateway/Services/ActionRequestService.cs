@@ -80,24 +80,10 @@ public sealed class ActionRequestService(
         var payloadJson = dto.Parameters.GetRawText();
         var payloadHash = CanonicalJson.Hash(dto.Parameters);
 
-        // --- Idempotency: same key + same payload replays; same key + CHANGED payload is rejected ---
-        var existing = await store.FindByIdempotencyKeyAsync(dto.IdempotencyKey, ct);
-        if (existing is not null)
-        {
-            if (string.Equals(existing.RequestPayloadHash, payloadHash, StringComparison.OrdinalIgnoreCase))
-            {
-                logger.LogInformation("Replay for idempotency key {Key} -> request {RequestId}.",
-                    dto.IdempotencyKey, existing.ActionRequestId);
-                return await BuildReplayResponseAsync(existing, ct);
-            }
-
-            logger.LogWarning("Idempotency key {Key} reused with a DIFFERENT payload; rejected.", dto.IdempotencyKey);
-            return BuildResponse(existing, existing.CorrelationId, Decision.Deny, existing.Status,
-                "Gateway.Idempotency", "1.0.0", ReasonCode.IdempotencyPayloadMismatch,
-                "This idempotency key was already used with a different payload.", existing.RequestPayloadHash);
-        }
-
         // --- Resolve + authorize the agent against the AUTHENTICATED identity (never body alone) ---
+        // Identity comes BEFORE the idempotency lookup: a key is private to the agent that owns it, so we
+        // must know who is asking before we can tell whether they have asked before. (Looking the key up
+        // first would let any caller replay another agent's result, or squat its key, with no identity.)
         if (security.EnforceIdentityBinding)
         {
             if (!caller.OriginVerified)
@@ -148,6 +134,9 @@ public sealed class ActionRequestService(
             && !string.Equals(dto.AgentId, badge, StringComparison.OrdinalIgnoreCase))
         {
             logger.LogWarning("Agent-id spoof rejected: body '{Body}' != resolved '{Bound}'.", dto.AgentId, agent.AgentId);
+            // The TOKEN identity is resolved, so this counts against that agent's deny velocity — but the key
+            // is not filed under it (an inconsistent identity assertion does not get to own a key).
+            await safety.RecordDenialAsync(agent.AgentId, dto.ActionId!, ReasonCode.AgentIdentityMismatch, correlationId, ct);
             return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
                 ReasonCode.AgentIdentityMismatch,
                 $"Body agentId '{dto.AgentId}' does not match the resolved agent identity.", ct);
@@ -155,12 +144,42 @@ public sealed class ActionRequestService(
 
         var executingAgentId = agent.AgentId; // authoritative
 
+        // --- Idempotency (scoped to the resolved agent): same key + same payload replays; same key +
+        //     CHANGED payload is rejected. Another agent's use of the same key is invisible here. ---
+        var existing = await store.FindByIdempotencyKeyAsync(executingAgentId, dto.IdempotencyKey, ct);
+        if (existing is not null)
+        {
+            if (string.Equals(existing.RequestPayloadHash, payloadHash, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogInformation("Replay for agent {Agent} idempotency key {Key} -> request {RequestId}.",
+                    executingAgentId, dto.IdempotencyKey, existing.ActionRequestId);
+                return await BuildReplayResponseAsync(existing, ct);
+            }
+
+            logger.LogWarning("Agent {Agent} reused idempotency key {Key} with a DIFFERENT payload; rejected.",
+                executingAgentId, dto.IdempotencyKey);
+            await safety.RecordDenialAsync(executingAgentId, dto.ActionId!, ReasonCode.IdempotencyPayloadMismatch, correlationId, ct);
+            return BuildResponse(existing, existing.CorrelationId, Decision.Deny, existing.Status,
+                "Gateway.Idempotency", "1.0.0", ReasonCode.IdempotencyPayloadMismatch,
+                "This idempotency key was already used with a different payload.", existing.RequestPayloadHash);
+        }
+
+        // --- Always-on safety gate (kill switch, quarantine, velocity + deny-velocity breakers) ---
+        // Checked as soon as the agent is known and before anything else is evaluated, never subject to
+        // warm-up: a frozen system, a quarantined agent or a runaway is a hard deny regardless of what the
+        // request is or what policy would allow. (A quarantined agent gets AGENT_QUARANTINED for every
+        // request — including malformed ones — rather than a stream of other denials.)
+        var safetyResult = await safety.CheckAsync(executingAgentId, ct);
+        if (!safetyResult.Allowed)
+            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                safetyResult.ReasonCode!, safetyResult.Reason!, ct, executingAgentId);
+
         // --- Validate action (unknown => audited DENY) ---
         var action = actions.Find(dto.ActionId);
         if (action is null)
         {
             return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
-                ReasonCode.UnknownAction, $"Action '{dto.ActionId}' is not registered.", ct);
+                ReasonCode.UnknownAction, $"Action '{dto.ActionId}' is not registered.", ct, executingAgentId);
         }
 
         // --- Validate parameters against the action schema (invalid => audited DENY) ---
@@ -168,16 +187,8 @@ public sealed class ActionRequestService(
         if (paramErrors.Count > 0)
         {
             return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
-                ReasonCode.InvalidParameters, string.Join("; ", paramErrors), ct);
+                ReasonCode.InvalidParameters, string.Join("; ", paramErrors), ct, executingAgentId);
         }
-
-        // --- Always-on safety gate (kill switch + velocity circuit breaker) ---
-        // Checked before policy and never subject to warm-up: an emergency freeze or a runaway agent is a
-        // hard deny regardless of what policy or posture would allow.
-        var safetyResult = await safety.CheckAsync(executingAgentId, ct);
-        if (!safetyResult.Allowed)
-            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
-                safetyResult.ReasonCode!, safetyResult.Reason!, ct);
 
         // --- Evaluate policy (against the active immutable snapshot) ---
         var computed = policy.Evaluate(new PolicyEvaluationContext
@@ -293,20 +304,36 @@ public sealed class ActionRequestService(
         return response;
     }
 
+    /// <summary>
+    /// Audited early-exit DENY. When the agent was resolved, the record is filed under that agent and the
+    /// caller's idempotency key, so a retry replays the denial. When the identity was NOT resolved
+    /// (not from APIM, no identity, unregistered, spoofed), the record is filed under an unresolved
+    /// marker with a gateway-generated key: an unauthenticated caller must not be able to reserve
+    /// ("squat") a key that a legitimate agent will present later. The key the caller supplied is kept
+    /// in the decision trace for forensics.
+    /// </summary>
     private async Task<ActionResponseDto> DenyAsync(
         ActionRequestDto dto, Guid correlationId, string payloadJson, string payloadHash,
-        string reasonCode, string reason, CancellationToken ct)
+        string reasonCode, string reason, CancellationToken ct, string? resolvedAgentId = null)
     {
+        var identityResolved = !string.IsNullOrEmpty(resolvedAgentId);
+        // A denial of a RESOLVED agent that never reached policy still counts toward its deny velocity.
+        if (identityResolved)
+            await safety.RecordDenialAsync(resolvedAgentId!, dto.ActionId ?? string.Empty, reasonCode, correlationId, ct);
+        var auditAgentId = identityResolved ? resolvedAgentId!
+            // Unresolved: record what the caller CLAIMED (agentId, else the badge, else a placeholder) so
+            // the attempt is attributable in the trail; the trace marks it as unverified.
+            : !string.IsNullOrWhiteSpace(dto.AgentId) ? dto.AgentId
+            : !string.IsNullOrWhiteSpace(dto.AgentIdentity) ? dto.AgentIdentity! : "(unresolved)";
+
         // Even rejected requests are persisted so every request produces an audit record.
         var request = new ActionRequestRecord
         {
             ActionRequestId = Guid.NewGuid(),
             CorrelationId = correlationId,
-            IdempotencyKey = dto.IdempotencyKey!,
+            IdempotencyKey = identityResolved ? dto.IdempotencyKey! : $"unresolved:{Guid.NewGuid():N}",
             RootAgentId = dto.RootAgentId,
-            // agentId may be omitted on the badge path; record the badge, else a placeholder, for audit.
-            ExecutingAgentId = !string.IsNullOrWhiteSpace(dto.AgentId) ? dto.AgentId
-                : !string.IsNullOrWhiteSpace(dto.AgentIdentity) ? dto.AgentIdentity! : "(unresolved)",
+            ExecutingAgentId = auditAgentId,
             InitiatingUserId = dto.InitiatingUserId,
             ActionId = dto.ActionId!,
             RequestPayloadJson = payloadJson,
@@ -324,7 +351,14 @@ public sealed class ActionRequestService(
             PolicyCode = "Gateway.Validation",
             PolicyVersion = "1.0.0",
             DecisionReason = reason,
-            EvaluationTraceJson = JsonSerializer.Serialize(new { reasonCode }),
+            EvaluationTraceJson = JsonSerializer.Serialize(new
+            {
+                reasonCode,
+                identityResolved,
+                suppliedIdempotencyKey = dto.IdempotencyKey,
+                suppliedAgentId = dto.AgentId,
+                suppliedAgentIdentity = dto.AgentIdentity
+            }),
             EvaluatedUtc = DateTimeOffset.UtcNow
         }, ct);
 

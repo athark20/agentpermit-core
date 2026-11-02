@@ -17,9 +17,14 @@ public sealed class InMemoryAgentPermitStore : IAgentPermitStore
     private readonly object _chainLock = new();
     private string? _latestReceiptHash;
 
-    public Task<ActionRequestRecord?> FindByIdempotencyKeyAsync(string idempotencyKey, CancellationToken ct)
+    /// <summary>Idempotency keys are scoped per agent: the uniqueness key is (agentId, idempotencyKey).</summary>
+    private static string IdempotencyScope(string agentId, string idempotencyKey)
+        => string.Concat(agentId.ToLowerInvariant(), "\u001f", idempotencyKey);
+
+    public Task<ActionRequestRecord?> FindByIdempotencyKeyAsync(string agentId, string idempotencyKey, CancellationToken ct)
     {
-        if (_idempotency.TryGetValue(idempotencyKey, out var id) && _requests.TryGetValue(id, out var rec))
+        if (_idempotency.TryGetValue(IdempotencyScope(agentId, idempotencyKey), out var id)
+            && _requests.TryGetValue(id, out var rec))
             return Task.FromResult<ActionRequestRecord?>(Clone(rec));
         return Task.FromResult<ActionRequestRecord?>(null);
     }
@@ -65,9 +70,10 @@ public sealed class InMemoryAgentPermitStore : IAgentPermitStore
 
     public Task InsertActionRequestAsync(ActionRequestRecord record, CancellationToken ct)
     {
-        // Enforce the unique idempotency key like the SQL UNIQUE constraint would.
-        if (!_idempotency.TryAdd(record.IdempotencyKey, record.ActionRequestId))
-            throw new InvalidOperationException($"Duplicate idempotency key '{record.IdempotencyKey}'.");
+        // Enforce the unique (agent, idempotency key) pair like the SQL UNIQUE constraint would.
+        if (!_idempotency.TryAdd(IdempotencyScope(record.ExecutingAgentId, record.IdempotencyKey), record.ActionRequestId))
+            throw new InvalidOperationException(
+                $"Duplicate idempotency key '{record.IdempotencyKey}' for agent '{record.ExecutingAgentId}'.");
         _requests[record.ActionRequestId] = Clone(record);
         return Task.CompletedTask;
     }

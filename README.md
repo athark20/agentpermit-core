@@ -2,7 +2,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10-512BD4.svg)](https://dotnet.microsoft.com/)
-![Tests](https://img.shields.io/badge/tests-226%20passing-16a34a.svg)
+[![CI](https://github.com/athark20/agentpermit-core/actions/workflows/ci.yml/badge.svg)](https://github.com/athark20/agentpermit-core/actions/workflows/ci.yml)
 ![Status](https://img.shields.io/badge/status-open%20core-0b2942.svg)
 
 

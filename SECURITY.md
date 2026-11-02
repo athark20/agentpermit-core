@@ -34,7 +34,9 @@ AgentPermit's security model depends on invariants that must never be weakened:
 
 - **Identity is derived, not declared** — `agentId` comes from the authenticated caller (via APIM),
   never from a request body.
-- **Idempotency is caller-owned** — keys are >= 8 chars, unique per request; the gateway never invents one.
+- **Idempotency is caller-owned and agent-scoped** — keys are >= 8 chars, unique per request, looked up
+  only after the agent's identity is resolved and only within that agent's namespace; the gateway never
+  invents one.
 - **High/critical actions are always binding** — they enforce from the first call, regardless of warm-up.
 - **APIM front door is part of the contract** — JWT validation and identity injection happen there.
 - **The zero-bypass DLP** is what makes governance binding — agents must reach targets only via AgentPermit.

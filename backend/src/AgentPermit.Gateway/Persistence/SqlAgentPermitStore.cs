@@ -58,11 +58,14 @@ public sealed class SqlAgentPermitStore(string connectionString) : IAgentPermitS
     private static DateTimeOffset Utc(DateTime dt) =>
         new(DateTime.SpecifyKind(dt, DateTimeKind.Utc));
 
-    public async Task<ActionRequestRecord?> FindByIdempotencyKeyAsync(string idempotencyKey, CancellationToken ct)
+    public async Task<ActionRequestRecord?> FindByIdempotencyKeyAsync(string agentId, string idempotencyKey, CancellationToken ct)
     {
+        // Scoped to the agent: the unique index is (ExecutingAgentId, IdempotencyKey) — see
+        // scripts/sql/2026-10-idempotency-per-agent.sql for the migration from the key-only index.
         await using var c = Open();
         var row = await c.QueryFirstOrDefaultAsync<Row.ActionRequest>(
-            "SELECT * FROM dbo.ActionRequest WHERE IdempotencyKey = @k", new { k = idempotencyKey });
+            "SELECT * FROM dbo.ActionRequest WHERE ExecutingAgentId = @a AND IdempotencyKey = @k",
+            new { a = agentId, k = idempotencyKey });
         return row?.Map();
     }
 

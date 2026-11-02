@@ -9,8 +9,12 @@ namespace AgentPermit.Gateway.Persistence;
 /// </summary>
 public interface IAgentPermitStore
 {
-    /// <summary>Idempotency lookup: returns the prior request for a key, or null.</summary>
-    Task<ActionRequestRecord?> FindByIdempotencyKeyAsync(string idempotencyKey, CancellationToken ct);
+    /// <summary>
+    /// Idempotency lookup, scoped to the resolved agent: returns the prior request this agent made with
+    /// this key, or null. Keys are an agent-private namespace — another agent presenting the same key must
+    /// neither replay this agent's result nor block this agent from using the key.
+    /// </summary>
+    Task<ActionRequestRecord?> FindByIdempotencyKeyAsync(string agentId, string idempotencyKey, CancellationToken ct);
 
     Task<ActionRequestRecord?> GetActionRequestAsync(Guid actionRequestId, CancellationToken ct);
 
