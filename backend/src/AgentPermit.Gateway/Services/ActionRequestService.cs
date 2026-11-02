@@ -13,6 +13,14 @@ namespace AgentPermit.Gateway.Services;
 public sealed class ApprovalOptions
 {
     public int ExpiryHours { get; set; } = 24;
+
+    /// <summary>
+    /// When true, an approval whose rule names an approver role (e.g. "FinanceController") can only be decided
+    /// by a member of an approver group with that name — and if no such group is defined, nobody can decide it
+    /// (fail closed). When false (default, for backwards compatibility), a missing group falls back to the
+    /// generic Approver persona with a warning in the log. Set to true in production.
+    /// </summary>
+    public bool RequireNamedApproverGroups { get; set; } = false;
 }
 
 /// <summary>
@@ -32,11 +40,42 @@ public sealed class ActionRequestService(
     FeedStatusTracker feedStatus,
     IAgentPermitStore store,
     ExecutionService execution,
+    ReceiptService receipts,
+    ReceiptOptions receiptOptions,
     ITeamsNotifier teams,
     SecurityOptions security,
     ApprovalOptions approvalOptions,
     ILogger<ActionRequestService> logger)
 {
+    /// <summary>
+    /// Mint a signed DECISION receipt for a DENY / REQUIRE_APPROVAL verdict and attach it to the response, so
+    /// what the agent TRIED is in the same tamper-evident chain as what it did. Best-effort: a signing or
+    /// store failure is logged and the (already persisted, already decided) response still goes back.
+    /// </summary>
+    private async Task AttachDecisionReceiptAsync(
+        ActionResponseDto response, ActionRequestRecord request, string decision, string policyVersion,
+        string? reasonCode, CancellationToken ct)
+    {
+        if (!receiptOptions.SignDecisions) return;
+        try
+        {
+            var receipt = await receipts.CreateAsync(new ReceiptInput
+            {
+                Request = request,
+                Decision = decision,
+                PolicyVersion = policyVersion,
+                ExecutionStatus = ExecutionStatus.NotExecuted,
+                Kind = ReceiptKind.Decision,
+                ReasonCode = reasonCode
+            }, ct);
+            response.Receipt = ReceiptService.ToDto(receipt, request.RequestPayloadHash);
+            response.ReceiptNumber = receipt.ReceiptNumber;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not mint a decision receipt for request {RequestId} (non-fatal).", request.ActionRequestId);
+        }
+    }
     public async Task<ActionResponseDto> ProcessAsync(ActionRequestDto dto, CallerContext caller, CancellationToken ct)
     {
         // A trusted connector may identify the CALLING agent by its own Entra Agent ID (its "badge").
@@ -238,13 +277,21 @@ public sealed class ActionRequestService(
         await PersistDecisionAsync(request.ActionRequestId, computed, effective, ct);
         await RecordObservationAsync(request, action, computed, effective, ct);
 
-        return effective.Decision switch
+        switch (effective.Decision)
         {
-            Decision.Allow => await HandleAllowAsync(request, dto.Parameters, computed, effective, correlationId, ct),
-            Decision.RequireApproval => await HandleRequireApprovalAsync(request, computed, effective, correlationId, ct),
-            _ => BuildResponse(request, correlationId, Decision.Deny, RequestState.Denied, computed.PolicyCode,
-                    computed.PolicyVersion, computed.ReasonCode, computed.Reason, payloadHash, effective)
-        };
+            case Decision.Allow:
+                return await HandleAllowAsync(request, dto.Parameters, computed, effective, correlationId, ct);
+            case Decision.RequireApproval:
+                return await HandleRequireApprovalAsync(request, computed, effective, correlationId, ct);
+            default:
+            {
+                var denied = BuildResponse(request, correlationId, Decision.Deny, RequestState.Denied, computed.PolicyCode,
+                    computed.PolicyVersion, computed.ReasonCode, computed.Reason, payloadHash, effective);
+                // A policy DENY is evidence too: sign it into the same chain as executions.
+                await AttachDecisionReceiptAsync(denied, request, Decision.Deny, computed.PolicyVersion, computed.ReasonCode, ct);
+                return denied;
+            }
+        }
     }
 
     private async Task<ActionResponseDto> HandleAllowAsync(
@@ -301,6 +348,8 @@ public sealed class ActionRequestService(
             RequestState.AwaitingApproval, result.PolicyCode, result.PolicyVersion,
             result.ReasonCode, result.Reason, request.RequestPayloadHash, effective);
         response.ApprovalRequestId = approval.ApprovalRequestId;
+        // The step-up itself is a signed decision; the execution receipt follows if/when a human approves.
+        await AttachDecisionReceiptAsync(response, request, Decision.RequireApproval, result.PolicyVersion, result.ReasonCode, ct);
         return response;
     }
 
@@ -362,8 +411,13 @@ public sealed class ActionRequestService(
             EvaluatedUtc = DateTimeOffset.UtcNow
         }, ct);
 
-        return BuildResponse(request, correlationId, Decision.Deny, RequestState.Denied,
+        var response = BuildResponse(request, correlationId, Decision.Deny, RequestState.Denied,
             "Gateway.Validation", "1.0.0", reasonCode, reason, payloadHash);
+        // Sign early-exit denials of a RESOLVED agent (they are attributable evidence of an attempt). Unresolved
+        // probes are audited but not signed: an anonymous caller must not be able to grow the chain at will.
+        if (identityResolved)
+            await AttachDecisionReceiptAsync(response, request, Decision.Deny, "1.0.0", reasonCode, ct);
+        return response;
     }
 
     private Task PersistDecisionAsync(
@@ -474,11 +528,13 @@ public sealed class ActionRequestService(
             reasonCode: null, decisionRecord?.DecisionReason, request.RequestPayloadHash);
         response.Replayed = true;
 
-        if (decision == Decision.Allow)
+        // Any receipt the request has — an execution receipt, or the signed decision receipt for a DENY /
+        // REQUIRE_APPROVAL — is replayed with it.
+        var receipt = await store.GetReceiptForRequestAsync(request.ActionRequestId, ct);
+        if (receipt is not null)
         {
-            var receipt = await store.GetReceiptForRequestAsync(request.ActionRequestId, ct);
-            if (receipt is not null)
-                response.Receipt = ReceiptService.ToDto(receipt, request.RequestPayloadHash);
+            response.Receipt = ReceiptService.ToDto(receipt, request.RequestPayloadHash);
+            response.ReceiptNumber = receipt.ReceiptNumber;
         }
         return response;
     }

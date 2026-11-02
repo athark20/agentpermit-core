@@ -145,4 +145,25 @@ public sealed class ActionReceiptRecord
     public string? PreviousReceiptHash { get; set; }
     public string? SignatureValue { get; set; }
     public DateTimeOffset CreatedUtc { get; set; }
+
+    /// <summary>
+    /// Position in the chain (genesis = 0, strictly +1 per receipt, unique). Lets a verifier detect a deleted
+    /// receipt between two it holds, and lets the store refuse a fork when two writers race for the head.
+    /// </summary>
+    public long SequenceNumber { get; set; }
+
+    /// <summary>EXECUTION or DECISION (see <see cref="Domain.ReceiptKind"/>).</summary>
+    public string Kind { get; set; } = Domain.ReceiptKind.Execution;
 }
+
+/// <summary>The current tail of the receipt chain: the latest hash and its sequence number (null/-1 when empty).</summary>
+public readonly record struct ReceiptChainHead(string? Hash, long Sequence)
+{
+    public static readonly ReceiptChainHead Empty = new(null, -1);
+}
+
+/// <summary>
+/// Thrown by a store when a receipt insert would fork the chain: another writer appended to the same head
+/// first (unique sequence / previous-hash violation). The writer re-reads the head and retries.
+/// </summary>
+public sealed class ReceiptChainConflictException(string message) : Exception(message);

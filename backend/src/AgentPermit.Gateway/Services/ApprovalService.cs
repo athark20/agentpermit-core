@@ -15,8 +15,73 @@ namespace AgentPermit.Gateway.Services;
 public sealed class ApprovalService(
     IAgentPermitStore store,
     ExecutionService execution,
+    ApproverGroupDirectory approverGroups,
+    AgentPermit.Gateway.Registry.IAgentRegistry agents,
+    ApprovalOptions options,
     ILogger<ApprovalService> logger)
 {
+    /// <summary>
+    /// Who may decide THIS approval. Two checks, both derived from the approver identity the controller has
+    /// already bound to the authenticated caller:
+    /// 1. Approver role — if the matched rule named an approver role, the approver must be in the approver
+    ///    group of that name (fail closed when <see cref="ApprovalOptions.RequireNamedApproverGroups"/>).
+    /// 2. Separation of duties (approve only) — the approver may not be the request's initiating user nor
+    ///    the agent's registered owner. Four eyes means two different people.
+    /// Returns a guard response, or null when the decision may proceed.
+    /// </summary>
+    private async Task<ApprovalDecisionResponseDto?> AuthorizeDeciderAsync(
+        ApprovalRequestRecord approval, ActionRequestRecord request, string? approverId, bool isApprove, CancellationToken ct)
+    {
+        // 1. Approver role.
+        if (!string.IsNullOrWhiteSpace(approval.ApproverRole))
+        {
+            var group = await approverGroups.GetAsync(approval.ApproverRole, ct);
+            if (group is null || group.Members.Count == 0)
+            {
+                if (options.RequireNamedApproverGroups)
+                {
+                    logger.LogWarning("Approval {ApprovalId} requires role {Role} but no approver group is defined; refused (fail closed).",
+                        approval.ApprovalRequestId, approval.ApproverRole);
+                    return Result(approval, ApprovalOutcome.ApproverRoleRequired, approval.Status,
+                        $"This approval must be decided by a member of the '{approval.ApproverRole}' approver group, and no such group is defined yet. Ask an administrator to create it.");
+                }
+                logger.LogWarning("Approval {ApprovalId} requires role {Role} but no approver group is defined; falling back to the generic Approver persona. Set Approval:RequireNamedApproverGroups=true to fail closed.",
+                    approval.ApprovalRequestId, approval.ApproverRole);
+            }
+            else if (!await approverGroups.IsMemberAsync(approval.ApproverRole, approverId, ct))
+            {
+                logger.LogWarning("Approval {ApprovalId}: '{Approver}' is not a member of approver group {Role}; refused.",
+                    approval.ApprovalRequestId, approverId, approval.ApproverRole);
+                return Result(approval, ApprovalOutcome.ApproverRoleRequired, approval.Status,
+                    $"Only members of the '{approval.ApproverRole}' approver group can decide this request.");
+            }
+        }
+
+        // 2. Separation of duties (approving only — anyone entitled may still decline).
+        if (isApprove)
+        {
+            var approverEmail = ApproverGroupDirectory.ExtractEmail(approverId);
+            var initiator = ApproverGroupDirectory.ExtractEmail(request.InitiatingUserId);
+            if (approverEmail is not null && initiator is not null && string.Equals(approverEmail, initiator, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("Approval {ApprovalId}: approver '{Approver}' is the initiating user; refused (separation of duties).",
+                    approval.ApprovalRequestId, approverId);
+                return Result(approval, ApprovalOutcome.SeparationOfDuties, approval.Status,
+                    "You asked for this action, so you can't be the one to approve it. A different approver must sign off.");
+            }
+
+            var owner = ApproverGroupDirectory.ExtractEmail(agents.Find(request.ExecutingAgentId)?.Owner);
+            if (approverEmail is not null && owner is not null && string.Equals(approverEmail, owner, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("Approval {ApprovalId}: approver '{Approver}' owns agent {Agent}; refused (separation of duties).",
+                    approval.ApprovalRequestId, approverId, request.ExecutingAgentId);
+                return Result(approval, ApprovalOutcome.SeparationOfDuties, approval.Status,
+                    $"You own the agent '{request.ExecutingAgentId}', so you can't approve its actions. A different approver must sign off.");
+            }
+        }
+
+        return null;
+    }
     public async Task<IReadOnlyList<ApprovalSummaryDto>> GetPendingAsync(CancellationToken ct)
     {
         var pending = await store.GetPendingApprovalsAsync(ct);
@@ -42,6 +107,10 @@ public sealed class ApprovalService(
     {
         var (approval, request, guard) = await LoadAndValidateAsync(approvalRequestId, ct);
         if (guard is not null) return guard;
+
+        // Is this person allowed to decide THIS approval? (role + separation of duties)
+        var decider = await AuthorizeDeciderAsync(approval!, request!, body.ApproverId, isApprove: true, ct);
+        if (decider is not null) return decider;
 
         // Tamper protection: the payload being executed must be exactly what was approved.
         var currentHash = CanonicalJson.Hash(ParsePayload(request!));
@@ -88,6 +157,9 @@ public sealed class ApprovalService(
     {
         var (approval, request, guard) = await LoadAndValidateAsync(approvalRequestId, ct);
         if (guard is not null) return guard;
+
+        var decider = await AuthorizeDeciderAsync(approval!, request!, body.ApproverId, isApprove: false, ct);
+        if (decider is not null) return decider;
 
         approval!.Status = ApprovalStatus.Rejected;
         approval.ApproverId = body.ApproverId;
@@ -145,6 +217,8 @@ public sealed class ApprovalService(
             Currency = TryString(p, "currency"),
             CustomerId = TryString(p, "customerId"),
             Reason = TryString(p, "reason"),
+            Parameters = p,
+            InitiatingUserId = r.InitiatingUserId,
             Status = a.Status,
             ApproverRole = a.ApproverRole,
             PayloadHash = a.PayloadHash,

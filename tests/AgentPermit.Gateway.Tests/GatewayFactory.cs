@@ -49,6 +49,12 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     /// <summary>Turn automatic quarantine off (deny-velocity trips then deny only the current request).</summary>
     public bool? DenyBreakerAutoQuarantine { get; init; }
 
+    /// <summary>Fail closed when a rule names an approver role for which no approver group is defined.</summary>
+    public bool RequireNamedApproverGroups { get; init; }
+
+    /// <summary>Mint signed DECISION receipts for DENY / REQUIRE_APPROVAL (default true).</summary>
+    public bool? SignDecisions { get; init; }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("Persistence:Provider", "InMemory");
@@ -76,6 +82,10 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
             builder.UseSetting("DenyBreaker:MaxDenialsPerWindow", db.ToString());
         if (DenyBreakerAutoQuarantine is { } aq)
             builder.UseSetting("DenyBreaker:AutoQuarantine", aq ? "true" : "false");
+        if (RequireNamedApproverGroups)
+            builder.UseSetting("Approval:RequireNamedApproverGroups", "true");
+        if (SignDecisions is { } sd)
+            builder.UseSetting("Receipts:SignDecisions", sd ? "true" : "false");
 
         builder.ConfigureTestServices(services =>
         {

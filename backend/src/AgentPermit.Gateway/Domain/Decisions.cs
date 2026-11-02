@@ -20,6 +20,17 @@ public static class ExecutionStatus
     public const string NotExecuted = "NotExecuted";
 }
 
+/// <summary>
+/// What a receipt attests. An EXECUTION receipt records that the gateway ran an allowed/approved action
+/// against its target; a DECISION receipt records a DENY or REQUIRE_APPROVAL verdict at the boundary — the
+/// evidence of what an agent <em>tried</em>, signed and chained exactly like an execution.
+/// </summary>
+public static class ReceiptKind
+{
+    public const string Execution = "EXECUTION";
+    public const string Decision = "DECISION";
+}
+
 /// <summary>Status persisted on dbo.ApprovalRequest.</summary>
 public static class ApprovalStatus
 {

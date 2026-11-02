@@ -82,6 +82,7 @@ builder.Services.AddSingleton<AgentPermit.Gateway.Licensing.IEntitlementsProvide
 var adminAuthOptions = builder.Configuration.GetSection("AdminAuth").Get<AdminAuthOptions>() ?? new AdminAuthOptions();
 builder.Services.AddSingleton(adminAuthOptions);
 builder.Services.AddSingleton<AccessDirectoryService>();   // persona resolution (Roles & access → who can do what)
+builder.Services.AddSingleton<ApproverGroupDirectory>();   // named approver groups (who may sign off on WHAT)
 builder.Services.AddSingleton<AdminAuthorizationService>();
 if (adminAuthOptions.IsConfigured)
 {
@@ -248,9 +249,10 @@ builder.Services.AddSingleton<ITargetSystemRegistry, CachedTargetSystemRegistry>
 builder.Services.AddSingleton<IRefundLedger, InMemoryRefundLedger>();
 
 // --- Receipt signing: Key Vault asymmetric key when configured, else unsigned ---
-var receiptSigningKeyId = builder.Configuration["Receipts:SigningKeyId"];
-if (!string.IsNullOrWhiteSpace(receiptSigningKeyId))
-    builder.Services.AddSingleton<IReceiptSigner>(new KeyVaultReceiptSigner(receiptSigningKeyId));
+var receiptOptions = builder.Configuration.GetSection("Receipts").Get<ReceiptOptions>() ?? new ReceiptOptions();
+builder.Services.AddSingleton(receiptOptions);
+if (!string.IsNullOrWhiteSpace(receiptOptions.SigningKeyId))
+    builder.Services.AddSingleton<IReceiptSigner>(new KeyVaultReceiptSigner(receiptOptions.SigningKeyId));
 else
     builder.Services.AddSingleton<IReceiptSigner, NullReceiptSigner>();
 
