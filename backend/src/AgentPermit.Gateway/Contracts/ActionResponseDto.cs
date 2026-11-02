@@ -93,6 +93,14 @@ public sealed class ReceiptDto
     [JsonPropertyName("receiptNumber")]
     public string ReceiptNumber { get; set; } = string.Empty;
 
+    /// <summary>EXECUTION (the action ran) or DECISION (a DENY / REQUIRE_APPROVAL verdict, nothing ran).</summary>
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "EXECUTION";
+
+    /// <summary>Position in the receipt chain (genesis = 0).</summary>
+    [JsonPropertyName("sequenceNumber")]
+    public long SequenceNumber { get; set; }
+
     [JsonPropertyName("executionStatus")]
     public string ExecutionStatus { get; set; } = string.Empty;
 

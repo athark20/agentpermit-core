@@ -20,6 +20,26 @@
       "type": "string",
       "format": "uuid"
     },
+    "kind": {
+      "description": "EXECUTION: the gateway ran the action. DECISION: a DENY / REQUIRE_APPROVAL verdict; nothing ran.",
+      "enum": [
+        "EXECUTION",
+        "DECISION"
+      ]
+    },
+    "sequenceNumber": {
+      "description": "Position in the receipt chain. Genesis is 0; strictly +1 per receipt; unique.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "reasonCode": {
+      "description": "Stable reason code for a DECISION receipt (e.g. POLICY_DENY, AGENT_QUARANTINED); null on EXECUTION.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 100
+    },
     "actionRequestId": {
       "type": "string",
       "format": "uuid"

@@ -83,7 +83,10 @@ public sealed class GatewayEndToEndTests
         Assert.Equal("REQUIRE_APPROVAL", body!.Decision);
         Assert.Equal("AWAITING_APPROVAL", body.Status);
         Assert.NotNull(body.ApprovalRequestId);
-        Assert.Null(body.Receipt);
+        // The step-up is itself a signed DECISION receipt; nothing ran.
+        Assert.NotNull(body.Receipt);
+        Assert.Equal("DECISION", body.Receipt!.Kind);
+        Assert.Equal("NotExecuted", body.Receipt.ExecutionStatus);
         Assert.Equal(0, factory.Services.GetRequiredService<IRefundLedger>().Count);
     }
 
@@ -100,7 +103,10 @@ public sealed class GatewayEndToEndTests
 
         Assert.Equal("DENY", body!.Decision);
         Assert.Equal("POLICY_DENY", body.ReasonCode);
-        Assert.Null(body.Receipt);
+        // A policy DENY is signed evidence of what the agent tried; nothing ran.
+        Assert.NotNull(body.Receipt);
+        Assert.Equal("DECISION", body.Receipt!.Kind);
+        Assert.Equal("NotExecuted", body.Receipt.ExecutionStatus);
         Assert.Equal(0, factory.Services.GetRequiredService<IRefundLedger>().Count);
     }
 
