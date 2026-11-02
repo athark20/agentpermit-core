@@ -43,6 +43,12 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     /// <summary>Lower the velocity circuit-breaker limit so the breaker trips within a short test.</summary>
     public int? CircuitBreakerMax { get; init; }
 
+    /// <summary>Lower the deny-velocity breaker limit so a probing agent is quarantined within a short test.</summary>
+    public int? DenyBreakerMax { get; init; }
+
+    /// <summary>Turn automatic quarantine off (deny-velocity trips then deny only the current request).</summary>
+    public bool? DenyBreakerAutoQuarantine { get; init; }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("Persistence:Provider", "InMemory");
@@ -66,6 +72,10 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
             builder.UseSetting("Rollout:MinObservationsToPromote", min.ToString());
         if (CircuitBreakerMax is { } cb)
             builder.UseSetting("CircuitBreaker:MaxExecutionsPerWindow", cb.ToString());
+        if (DenyBreakerMax is { } db)
+            builder.UseSetting("DenyBreaker:MaxDenialsPerWindow", db.ToString());
+        if (DenyBreakerAutoQuarantine is { } aq)
+            builder.UseSetting("DenyBreaker:AutoQuarantine", aq ? "true" : "false");
 
         builder.ConfigureTestServices(services =>
         {

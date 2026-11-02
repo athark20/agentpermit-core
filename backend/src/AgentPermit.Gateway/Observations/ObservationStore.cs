@@ -33,6 +33,13 @@ public static class ObservationSource
     public const string Gateway = "GATEWAY";
     public const string PurviewAudit = "PURVIEW_AUDIT";
     public const string FlowRun = "FLOW_RUN";
+
+    /// <summary>
+    /// A denial recorded by the safety layer for a RESOLVED agent that never reached policy (unknown action,
+    /// invalid parameters, identity mismatch, idempotency misuse). Feeds the deny-velocity breaker; excluded
+    /// from rollout evidence so an agent cannot "earn" promotion by generating rejected traffic.
+    /// </summary>
+    public const string GatewaySafety = "GATEWAY_SAFETY";
 }
 
 /// <summary>Aggregated warm-up evidence for one agent over a window — feeds the rollout recommendation.</summary>
@@ -51,7 +58,16 @@ public sealed class AgentObservationStats
 public interface IObservationStore
 {
     Task AppendAsync(ObservationRecord observation, CancellationToken ct);
+
+    /// <summary>Rollout evidence for an agent. Excludes <see cref="ObservationSource.GatewaySafety"/> rows.</summary>
     Task<AgentObservationStats> GetAgentStatsAsync(string agentId, DateTimeOffset since, CancellationToken ct);
+
+    /// <summary>
+    /// Number of effective DENY decisions for an agent since <paramref name="since"/>, across ALL sources
+    /// (policy denials and safety-layer denials alike). Drives the deny-velocity breaker.
+    /// </summary>
+    Task<int> CountDenialsAsync(string agentId, DateTimeOffset since, CancellationToken ct);
+
     Task<IReadOnlyList<ObservationRecord>> ListForAgentAsync(string agentId, int limit, CancellationToken ct);
 }
 
@@ -66,10 +82,18 @@ public sealed class InMemoryObservationStore : IObservationStore
         return Task.CompletedTask;
     }
 
+    public Task<int> CountDenialsAsync(string agentId, DateTimeOffset since, CancellationToken ct)
+        => Task.FromResult(_items.Count(o =>
+            string.Equals(o.AgentId, agentId, StringComparison.OrdinalIgnoreCase)
+            && o.OccurredUtc >= since
+            && string.Equals(o.EffectiveDecision, "DENY", StringComparison.Ordinal)));
+
     public Task<AgentObservationStats> GetAgentStatsAsync(string agentId, DateTimeOffset since, CancellationToken ct)
     {
         var rows = _items.Where(o =>
-            string.Equals(o.AgentId, agentId, StringComparison.OrdinalIgnoreCase) && o.OccurredUtc >= since).ToList();
+            string.Equals(o.AgentId, agentId, StringComparison.OrdinalIgnoreCase)
+            && o.OccurredUtc >= since
+            && !string.Equals(o.Source, ObservationSource.GatewaySafety, StringComparison.Ordinal)).ToList();
         return Task.FromResult(new AgentObservationStats
         {
             AgentId = agentId,

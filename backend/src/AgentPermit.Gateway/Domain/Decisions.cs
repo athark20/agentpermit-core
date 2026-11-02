@@ -48,4 +48,11 @@ public static class ReasonCode
 
     /// <summary>An always-on velocity circuit breaker tripped for this agent (runaway protection).</summary>
     public const string CircuitBreaker = "CIRCUIT_BREAKER";
+
+    /// <summary>
+    /// The agent is quarantined: every action request is denied until an admin lifts it. Set automatically
+    /// when the deny-velocity breaker trips (an agent being told "no" over and over is probing, not working),
+    /// or manually by an admin.
+    /// </summary>
+    public const string AgentQuarantined = "AGENT_QUARANTINED";
 }

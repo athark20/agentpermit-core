@@ -48,8 +48,8 @@ An action flows through a fixed, ordered pipeline. Any stage can end it.
 Agent → APIM (authn, identity, schema) → Gateway:
   1. Identity binding      resolve the agent from the token; reject spoofed agentId
   2. Idempotency           caller-owned key, scoped to the resolved agent; replay-safe
-  3. Action & schema       actionId must be catalogued; parameters validated
-  4. Safety gate           global kill switch + per-agent velocity circuit breaker
+  3. Safety gate           kill switch · per-agent quarantine · velocity + deny-velocity breakers
+  4. Action & schema       actionId must be catalogued; parameters validated
   5. Policy engine         evaluate signed snapshot → ALLOW / REQUIRE_APPROVAL / DENY
   6. Enforcement gate      apply rollout posture; HIGH/CRITICAL always binding
   7. Approval workflow     (if REQUIRE_APPROVAL) freeze payload hash, await human
@@ -89,7 +89,7 @@ Every execution produces an `ActionReceipt`: canonical content hash, **RS256 sig
 A REQUIRE_APPROVAL decision opens an approval with a **frozen payload hash**. Approve → re-verify hash → execute (dup-guarded) → receipt. Reject → no execution. Tampered payload at approval time → **409 `PayloadChanged`**. Sign-off happens in the console ("Things needing you") and/or a Teams card.
 
 ### Always-on safety net
-Independent of policy and warm-up: a **global kill switch** (freeze → `SYSTEM_FROZEN`) and a **per-agent velocity circuit breaker** (`CIRCUIT_BREAKER`), checked before policy — a runaway or emergency stop is a hard deny.
+Independent of policy and warm-up, checked as soon as the agent is known: a **global kill switch** (freeze → `SYSTEM_FROZEN`), a **per-agent quarantine** (`AGENT_QUARANTINED`, persisted, lifted by an admin), a **per-agent execution-velocity breaker** (`CIRCUIT_BREAKER`, too many ALLOWs in a window) and a **deny-velocity breaker** (too many denials in a window → automatic quarantine). The deny-velocity breaker exists because the 2026 incident record shows agents treating a refusal as a puzzle to solve: identity mismatches, unknown actions, schema failures, idempotency misuse and policy denials for a *resolved* agent all count; denials of an unresolved identity do not, so an unauthenticated probe can never quarantine a real agent by claiming its name. Safety-layer denials are stored as `GATEWAY_SAFETY` observations and are excluded from rollout evidence, so rejected traffic can't earn an agent a promotion.
 
 ---
 
@@ -144,3 +144,4 @@ All three resolve identity from the same APIM-forwarded headers and run the same
 | Tampered evidence | RS256 signatures + hash chain; offline verifiable |
 | Tampered policy | Signed snapshots, re-verified at load; tampered = refused |
 | Runaway agent / emergency | Velocity breaker + global kill switch, ahead of policy |
+| Agent probes a block (retries around a refusal, tries other actions/parameters, mis-asserts identity) | Deny-velocity breaker → automatic per-agent quarantine until an admin lifts it; unresolved identities never count |

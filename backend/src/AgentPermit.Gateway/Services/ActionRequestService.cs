@@ -134,6 +134,9 @@ public sealed class ActionRequestService(
             && !string.Equals(dto.AgentId, badge, StringComparison.OrdinalIgnoreCase))
         {
             logger.LogWarning("Agent-id spoof rejected: body '{Body}' != resolved '{Bound}'.", dto.AgentId, agent.AgentId);
+            // The TOKEN identity is resolved, so this counts against that agent's deny velocity — but the key
+            // is not filed under it (an inconsistent identity assertion does not get to own a key).
+            await safety.RecordDenialAsync(agent.AgentId, dto.ActionId!, ReasonCode.AgentIdentityMismatch, correlationId, ct);
             return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
                 ReasonCode.AgentIdentityMismatch,
                 $"Body agentId '{dto.AgentId}' does not match the resolved agent identity.", ct);
@@ -155,10 +158,21 @@ public sealed class ActionRequestService(
 
             logger.LogWarning("Agent {Agent} reused idempotency key {Key} with a DIFFERENT payload; rejected.",
                 executingAgentId, dto.IdempotencyKey);
+            await safety.RecordDenialAsync(executingAgentId, dto.ActionId!, ReasonCode.IdempotencyPayloadMismatch, correlationId, ct);
             return BuildResponse(existing, existing.CorrelationId, Decision.Deny, existing.Status,
                 "Gateway.Idempotency", "1.0.0", ReasonCode.IdempotencyPayloadMismatch,
                 "This idempotency key was already used with a different payload.", existing.RequestPayloadHash);
         }
+
+        // --- Always-on safety gate (kill switch, quarantine, velocity + deny-velocity breakers) ---
+        // Checked as soon as the agent is known and before anything else is evaluated, never subject to
+        // warm-up: a frozen system, a quarantined agent or a runaway is a hard deny regardless of what the
+        // request is or what policy would allow. (A quarantined agent gets AGENT_QUARANTINED for every
+        // request — including malformed ones — rather than a stream of other denials.)
+        var safetyResult = await safety.CheckAsync(executingAgentId, ct);
+        if (!safetyResult.Allowed)
+            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                safetyResult.ReasonCode!, safetyResult.Reason!, ct, executingAgentId);
 
         // --- Validate action (unknown => audited DENY) ---
         var action = actions.Find(dto.ActionId);
@@ -175,14 +189,6 @@ public sealed class ActionRequestService(
             return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
                 ReasonCode.InvalidParameters, string.Join("; ", paramErrors), ct, executingAgentId);
         }
-
-        // --- Always-on safety gate (kill switch + velocity circuit breaker) ---
-        // Checked before policy and never subject to warm-up: an emergency freeze or a runaway agent is a
-        // hard deny regardless of what policy or posture would allow.
-        var safetyResult = await safety.CheckAsync(executingAgentId, ct);
-        if (!safetyResult.Allowed)
-            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
-                safetyResult.ReasonCode!, safetyResult.Reason!, ct, executingAgentId);
 
         // --- Evaluate policy (against the active immutable snapshot) ---
         var computed = policy.Evaluate(new PolicyEvaluationContext
@@ -311,6 +317,9 @@ public sealed class ActionRequestService(
         string reasonCode, string reason, CancellationToken ct, string? resolvedAgentId = null)
     {
         var identityResolved = !string.IsNullOrEmpty(resolvedAgentId);
+        // A denial of a RESOLVED agent that never reached policy still counts toward its deny velocity.
+        if (identityResolved)
+            await safety.RecordDenialAsync(resolvedAgentId!, dto.ActionId ?? string.Empty, reasonCode, correlationId, ct);
         var auditAgentId = identityResolved ? resolvedAgentId!
             // Unresolved: record what the caller CLAIMED (agentId, else the badge, else a placeholder) so
             // the attempt is attributable in the trail; the trace marks it as unverified.
