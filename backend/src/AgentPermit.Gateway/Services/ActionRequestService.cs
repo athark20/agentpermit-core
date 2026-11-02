@@ -124,6 +124,17 @@ public sealed class ActionRequestService(
         // Identity comes BEFORE the idempotency lookup: a key is private to the agent that owns it, so we
         // must know who is asking before we can tell whether they have asked before. (Looking the key up
         // first would let any caller replay another agent's result, or squat its key, with no identity.)
+        // A token the gateway itself validated is the strongest identity available.
+        //  - A token that was PRESENTED and rejected always ends the request here: falling back to the header
+        //    (or worse, the body) on a bad signature would make validation optional in practice.
+        //  - A token that was never presented ends it too once Required is on; until then the APIM header
+        //    path still works, so a fleet can be migrated agent by agent.
+        if (security.AgentAuth.IsConfigured && !caller.TokenVerified
+            && (caller.TokenPresented || security.AgentAuth.Required))
+            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                ReasonCode.TokenInvalid,
+                $"A valid agent access token is required. {caller.TokenError}".TrimEnd(), ct);
+
         if (security.EnforceIdentityBinding)
         {
             if (!caller.OriginVerified)
@@ -155,13 +166,21 @@ public sealed class ActionRequestService(
                     ReasonCode.AgentNotRegistered,
                     $"Authenticated identity '{caller.AuthenticatedClientId}' is not bound to a registered agent.", ct);
         }
-        else
+        else if (!security.AgentAuth.IsConfigured)
         {
             // No identity asserted and binding not enforced (local/dev): fall back to the body agentId.
+            // Never reached once agent-token validation is configured — a deployment that validates tokens
+            // must not accept a self-declared agentId, whatever else is or isn't set.
             agent = agents.Find(dto.AgentId);
             if (agent is null)
                 return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
                     ReasonCode.AgentNotRegistered, $"Agent '{dto.AgentId}' is not registered.", ct);
+        }
+        else
+        {
+            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                ReasonCode.IdentityRequired,
+                "An authenticated agent identity is required; a body-supplied agentId is not accepted.", ct);
         }
 
         // Whenever an identity was asserted (connector-carried badge or token), a body agentId that is
@@ -183,6 +202,25 @@ public sealed class ActionRequestService(
         }
 
         var executingAgentId = agent.AgentId; // authoritative
+
+        // The human the agent acts for is DERIVED from a delegated token when one is present — never trusted
+        // from the body, because separation of duties (who may approve this) rests on it. A body value that
+        // disagrees with the token is a spoof attempt, exactly like a mismatched agentId.
+        if (caller.AuthenticatedUserId is { } tokenUser)
+        {
+            if (!string.IsNullOrWhiteSpace(dto.InitiatingUserId)
+                && !string.Equals(dto.InitiatingUserId.Trim(), tokenUser, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("Initiating-user spoof rejected: body '{Body}' != token '{Token}'.",
+                    dto.InitiatingUserId, tokenUser);
+                // DenyAsync records the denial against the resolved agent; don't double-count it here.
+                return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                    ReasonCode.InitiatingUserMismatch,
+                    $"Body initiatingUserId '{dto.InitiatingUserId}' does not match the authenticated user.", ct, executingAgentId);
+            }
+            // Downstream (audit record, policy context, aggregates, approval checks) reads the verified value.
+            dto.InitiatingUserId = tokenUser;
+        }
 
         // --- Idempotency (scoped to the resolved agent): same key + same payload replays; same key +
         //     CHANGED payload is rejected. Another agent's use of the same key is invisible here. ---

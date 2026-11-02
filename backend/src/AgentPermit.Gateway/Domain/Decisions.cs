@@ -47,6 +47,12 @@ public static class ReasonCode
     public const string IdentityRequired = "IDENTITY_REQUIRED";
     public const string AgentIdentityMismatch = "AGENT_IDENTITY_MISMATCH";
     public const string NotFromApim = "NOT_FROM_APIM";
+
+    /// <summary>Agent-token validation is configured and the presented token was missing or rejected.</summary>
+    public const string TokenInvalid = "TOKEN_INVALID";
+
+    /// <summary>The body declared an initiatingUserId that disagrees with the delegated token's own user.</summary>
+    public const string InitiatingUserMismatch = "INITIATING_USER_MISMATCH";
     public const string UnknownAction = "UNKNOWN_ACTION";
     public const string InvalidParameters = "INVALID_PARAMETERS";
     public const string IdempotencyPayloadMismatch = "IDEMPOTENCY_PAYLOAD_MISMATCH";
