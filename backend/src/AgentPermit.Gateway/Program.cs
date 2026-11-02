@@ -82,11 +82,44 @@ builder.Services.AddSingleton<AgentPermit.Gateway.Licensing.IEntitlementsProvide
 var adminAuthOptions = builder.Configuration.GetSection("AdminAuth").Get<AdminAuthOptions>() ?? new AdminAuthOptions();
 builder.Services.AddSingleton(adminAuthOptions);
 builder.Services.AddSingleton<AccessDirectoryService>();   // persona resolution (Roles & access → who can do what)
+builder.Services.AddSingleton<ApproverGroupDirectory>();   // named approver groups (who may sign off on WHAT)
 builder.Services.AddSingleton<AdminAuthorizationService>();
-if (adminAuthOptions.IsConfigured)
+
+// --- Agent identity: establish the caller on every front door (REST + MCP) ---
+// When Security:AgentAuth is configured the gateway validates the AGENT's own bearer token itself (defence
+// in depth behind APIM) and derives both the agent and — from a delegated token — the human it acts for.
+var agentAuthOptions = securityOptions.AgentAuth;
+builder.Services.AddSingleton<CallerContextFactory>();
+
+if (adminAuthOptions.IsConfigured || agentAuthOptions.IsConfigured)
 {
-    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-        .AddJwtBearer(options =>
+    // The admin scheme stays the default when configured, so admin endpoints behave exactly as before.
+    var auth = builder.Services.AddAuthentication(adminAuthOptions.IsConfigured
+        ? JwtBearerDefaults.AuthenticationScheme
+        : AgentAuthOptions.Scheme);
+
+    if (agentAuthOptions.IsConfigured)
+        auth.AddJwtBearer(AgentAuthOptions.Scheme, options =>
+        {
+            options.Authority = agentAuthOptions.Authority;
+            options.Audience = agentAuthOptions.Audience;
+            options.MapInboundClaims = false;  // keep azp/appid/oid/scp as issued
+            options.TokenValidationParameters.ValidAudiences = agentAuthOptions.ValidAudiences();
+            var agentIssuers = agentAuthOptions.ValidIssuers();
+            if (agentIssuers.Length > 0) options.TokenValidationParameters.ValidIssuers = agentIssuers;
+            options.Events = new JwtBearerEvents
+            {
+                OnAuthenticationFailed = ctx =>
+                {
+                    ctx.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+                        .CreateLogger("AgentJwtBearer").LogWarning(ctx.Exception, "Agent token validation failed");
+                    return Task.CompletedTask;
+                }
+            };
+        });
+
+    if (adminAuthOptions.IsConfigured)
+        auth.AddJwtBearer(options =>
         {
             options.Authority = adminAuthOptions.Authority;
             options.Audience = adminAuthOptions.Audience;
@@ -108,6 +141,7 @@ if (adminAuthOptions.IsConfigured)
                 }
             };
         });
+
     builder.Services.AddAuthorization();
 }
 if (adminAuthOptions.AllowedCorsOrigins.Length > 0)
@@ -148,6 +182,9 @@ builder.Services.AddSingleton<IPublishablePolicySnapshotProvider>(sp => new Publ
 builder.Services.AddSingleton<IPolicySnapshotProvider>(sp => sp.GetRequiredService<IPublishablePolicySnapshotProvider>());
 builder.Services.AddSingleton<IPolicyPublisher, PolicyPublisher>();
 builder.Services.AddSingleton<IPolicyEngine, ConfigurablePolicyEngine>();
+// Computes the windowed aggregates (sum/count/distinct/max over a look-back) that limit rules reference,
+// before the synchronous engine runs. No aggregate rules in the snapshot => no store call per request.
+builder.Services.AddScoped<PolicyAggregateProvider>();
 // Applies each agent's rollout posture (OBSERVE/WARN/ENFORCE) to the computed decision, enforcing the
 // invariant that HIGH/CRITICAL-consequence actions are always binding regardless of warm-up.
 builder.Services.AddSingleton<EnforcementGate>();
@@ -248,9 +285,10 @@ builder.Services.AddSingleton<ITargetSystemRegistry, CachedTargetSystemRegistry>
 builder.Services.AddSingleton<IRefundLedger, InMemoryRefundLedger>();
 
 // --- Receipt signing: Key Vault asymmetric key when configured, else unsigned ---
-var receiptSigningKeyId = builder.Configuration["Receipts:SigningKeyId"];
-if (!string.IsNullOrWhiteSpace(receiptSigningKeyId))
-    builder.Services.AddSingleton<IReceiptSigner>(new KeyVaultReceiptSigner(receiptSigningKeyId));
+var receiptOptions = builder.Configuration.GetSection("Receipts").Get<ReceiptOptions>() ?? new ReceiptOptions();
+builder.Services.AddSingleton(receiptOptions);
+if (!string.IsNullOrWhiteSpace(receiptOptions.SigningKeyId))
+    builder.Services.AddSingleton<IReceiptSigner>(new KeyVaultReceiptSigner(receiptOptions.SigningKeyId));
 else
     builder.Services.AddSingleton<IReceiptSigner, NullReceiptSigner>();
 
@@ -375,7 +413,7 @@ if (app.Environment.IsDevelopment())
 }
 
 if (adminAuthOptions.AllowedCorsOrigins.Length > 0) app.UseCors("admin-ui");
-if (adminAuthOptions.IsConfigured)
+if (adminAuthOptions.IsConfigured || securityOptions.AgentAuth.IsConfigured)
 {
     app.UseAuthentication();
     app.UseAuthorization();

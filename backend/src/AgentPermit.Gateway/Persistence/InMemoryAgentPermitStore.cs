@@ -68,6 +68,44 @@ public sealed class InMemoryAgentPermitStore : IAgentPermitStore
         return Task.FromResult(rows);
     }
 
+    public Task<IReadOnlyList<string?>> ListParameterValuesAsync(AggregateQuery q, CancellationToken ct)
+    {
+        var actions = new HashSet<string>(q.ActionIds, StringComparer.OrdinalIgnoreCase);
+        var statuses = q.Statuses is null ? null : new HashSet<string>(q.Statuses, StringComparer.OrdinalIgnoreCase);
+        var values = new List<string?>();
+        foreach (var r in _requests.Values)
+        {
+            if (!actions.Contains(r.ActionId) || r.CreatedUtc < q.Since) continue;
+            if (statuses is not null && !statuses.Contains(r.Status)) continue;
+            if (q.AgentId is not null && !string.Equals(r.ExecutingAgentId, q.AgentId, StringComparison.OrdinalIgnoreCase)) continue;
+            if (q.RootAgentId is not null && !string.Equals(r.RootAgentId ?? string.Empty, q.RootAgentId, StringComparison.OrdinalIgnoreCase)) continue;
+            if (q.InitiatingUserId is not null && !string.Equals(r.InitiatingUserId ?? string.Empty, q.InitiatingUserId, StringComparison.OrdinalIgnoreCase)) continue;
+
+            using var doc = System.Text.Json.JsonDocument.Parse(string.IsNullOrWhiteSpace(r.RequestPayloadJson) ? "{}" : r.RequestPayloadJson);
+            var root = doc.RootElement;
+            var ok = true;
+            foreach (var (name, expected) in q.ParameterEquals)
+            {
+                if (!string.Equals(JsonText(root, name), expected, StringComparison.OrdinalIgnoreCase)) { ok = false; break; }
+            }
+            if (!ok) continue;
+            values.Add(q.ValueField is null ? null : JsonText(root, q.ValueField));
+        }
+        return Task.FromResult<IReadOnlyList<string?>>(values);
+    }
+
+    /// <summary>Top-level payload property as text (strings raw, numbers/bools as their JSON text), or null.</summary>
+    private static string? JsonText(System.Text.Json.JsonElement root, string name)
+    {
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object || !root.TryGetProperty(name, out var v)) return null;
+        return v.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.String => v.GetString(),
+            System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Undefined => null,
+            _ => v.GetRawText()
+        };
+    }
+
     public Task InsertActionRequestAsync(ActionRequestRecord record, CancellationToken ct)
     {
         // Enforce the unique (agent, idempotency key) pair like the SQL UNIQUE constraint would.
@@ -153,24 +191,31 @@ public sealed class InMemoryAgentPermitStore : IAgentPermitStore
         return Task.CompletedTask;
     }
 
-    public Task<string?> GetLatestReceiptHashAsync(CancellationToken ct)
+    private long _latestSequence = -1;
+
+    public Task<ReceiptChainHead> GetReceiptChainHeadAsync(CancellationToken ct)
     {
-        lock (_chainLock) return Task.FromResult(_latestReceiptHash);
+        lock (_chainLock) return Task.FromResult(new ReceiptChainHead(_latestReceiptHash, _latestSequence));
     }
 
     public Task<ActionReceiptRecord?> GetReceiptForRequestAsync(Guid actionRequestId, CancellationToken ct)
     {
+        // Prefer the EXECUTION receipt; otherwise the latest DECISION receipt.
         var match = _receipts.Values
             .Where(r => r.ActionRequestId == actionRequestId)
-            .OrderByDescending(r => r.CreatedUtc)
+            .OrderBy(r => r.Kind == Domain.ReceiptKind.Execution ? 0 : 1)
+            .ThenByDescending(r => r.SequenceNumber)
             .FirstOrDefault();
         return Task.FromResult(match);
     }
 
+    public Task<ActionReceiptRecord?> GetReceiptBySequenceAsync(long sequenceNumber, CancellationToken ct)
+        => Task.FromResult(_receipts.Values.FirstOrDefault(r => r.SequenceNumber == sequenceNumber));
+
     public Task<IReadOnlyList<ActionReceiptRecord>> ListRecentReceiptsAsync(int take, CancellationToken ct)
     {
         IReadOnlyList<ActionReceiptRecord> recent = _receipts.Values
-            .OrderByDescending(r => r.CreatedUtc)
+            .OrderByDescending(r => r.SequenceNumber)
             .Take(take <= 0 ? 50 : take)
             .ToList();
         return Task.FromResult(recent);
@@ -180,8 +225,15 @@ public sealed class InMemoryAgentPermitStore : IAgentPermitStore
     {
         lock (_chainLock)
         {
+            // Mirror the SQL unique constraints: the record must extend the CURRENT head, or it is a fork.
+            if (!string.Equals(record.PreviousReceiptHash, _latestReceiptHash, StringComparison.OrdinalIgnoreCase)
+                || record.SequenceNumber != _latestSequence + 1)
+                throw new ReceiptChainConflictException(
+                    $"Receipt chain conflict: expected previous hash '{_latestReceiptHash}' / sequence {_latestSequence + 1}, " +
+                    $"got '{record.PreviousReceiptHash}' / {record.SequenceNumber}.");
             _receipts[record.ActionReceiptId] = record;
             _latestReceiptHash = record.ReceiptHash;
+            _latestSequence = record.SequenceNumber;
         }
         return Task.CompletedTask;
     }

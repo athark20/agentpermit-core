@@ -98,6 +98,8 @@ public sealed class ApprovalsController(
         ApprovalOutcome.NotFound => StatusCode(StatusCodes.Status404NotFound, result),
         ApprovalOutcome.AlreadyDecided or ApprovalOutcome.Expired or ApprovalOutcome.PayloadChanged
             => StatusCode(StatusCodes.Status409Conflict, result),
+        ApprovalOutcome.ApproverRoleRequired or ApprovalOutcome.SeparationOfDuties
+            => StatusCode(StatusCodes.Status403Forbidden, result),
         _ => StatusCode(StatusCodes.Status502BadGateway, result)
     };
 }

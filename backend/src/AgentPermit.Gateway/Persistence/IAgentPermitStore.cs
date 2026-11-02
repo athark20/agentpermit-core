@@ -27,6 +27,12 @@ public interface IAgentPermitStore
     /// <summary>Per-agent activity summary since <paramref name="since"/> — the centralized fleet trail view.</summary>
     Task<IReadOnlyList<AgentTrailRow>> GetAgentTrailSummaryAsync(DateTimeOffset since, CancellationToken ct);
 
+    /// <summary>
+    /// Windowed look-back for policy aggregates (see <see cref="AggregateQuery"/>): one entry per matching
+    /// request, holding the requested payload field's value as a string (numbers in invariant form), or null.
+    /// </summary>
+    Task<IReadOnlyList<string?>> ListParameterValuesAsync(AggregateQuery query, CancellationToken ct);
+
     Task InsertActionRequestAsync(ActionRequestRecord record, CancellationToken ct);
 
     Task UpdateActionRequestStatusAsync(Guid actionRequestId, string status, CancellationToken ct);
@@ -55,13 +61,24 @@ public interface IAgentPermitStore
 
     Task UpdateExecutionAsync(ExecutionRecord record, CancellationToken ct);
 
-    /// <summary>Hash of the most recently written receipt (for chaining), or null.</summary>
-    Task<string?> GetLatestReceiptHashAsync(CancellationToken ct);
+    /// <summary>The chain head (latest receipt hash + sequence number), or <see cref="ReceiptChainHead.Empty"/>.</summary>
+    Task<ReceiptChainHead> GetReceiptChainHeadAsync(CancellationToken ct);
 
+    /// <summary>
+    /// The receipt that best represents a request: its EXECUTION receipt if one exists, else its latest
+    /// DECISION receipt, else null.
+    /// </summary>
     Task<ActionReceiptRecord?> GetReceiptForRequestAsync(Guid actionRequestId, CancellationToken ct);
+
+    /// <summary>The receipt at a chain position, or null (used by the verifier to check continuity).</summary>
+    Task<ActionReceiptRecord?> GetReceiptBySequenceAsync(long sequenceNumber, CancellationToken ct);
 
     /// <summary>Most recent receipts (newest first) for the admin evidence view.</summary>
     Task<IReadOnlyList<ActionReceiptRecord>> ListRecentReceiptsAsync(int take, CancellationToken ct);
 
+    /// <summary>
+    /// Append a receipt. Must throw <see cref="ReceiptChainConflictException"/> if the record's
+    /// <c>PreviousReceiptHash</c>/<c>SequenceNumber</c> no longer match the head (another writer won the race).
+    /// </summary>
     Task InsertReceiptAsync(ActionReceiptRecord record, CancellationToken ct);
 }

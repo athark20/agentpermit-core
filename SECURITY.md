@@ -32,8 +32,9 @@ the hardening notes in the docs.
 
 AgentPermit's security model depends on invariants that must never be weakened:
 
-- **Identity is derived, not declared** — `agentId` comes from the authenticated caller (via APIM),
-  never from a request body.
+- **Identity is derived, not declared** — `agentId` comes from the authenticated caller: the token the
+  gateway validated when `Security:AgentAuth` is configured, else the APIM-forwarded identity. Never from a
+  request body. The same applies to `initiatingUserId` when a delegated token carries one.
 - **Idempotency is caller-owned and agent-scoped** — keys are >= 8 chars, unique per request, looked up
   only after the agent's identity is resolved and only within that agent's namespace; the gateway never
   invents one.

@@ -169,8 +169,53 @@ public sealed class PolicyPublisher(
             if (!ValidDecisions.Contains(r.Decision))
                 throw new PolicyValidationException($"rule '{r.Id}': invalid decision '{r.Decision}'.");
             foreach (var c in r.Conditions)
+            {
                 if (!ValidOperators.Contains(c.Operator))
                     throw new PolicyValidationException($"rule '{r.Id}': invalid operator '{c.Operator}'.");
+                if (c.Aggregate is { } agg) ValidateAggregate(r, c, agg);
+            }
         }
     }
+
+    /// <summary>
+    /// A windowed-aggregate condition must be well formed at PUBLISH time — a bad window or an unknown
+    /// function would otherwise fail every request the rule touches, at runtime, in production.
+    /// </summary>
+    private static void ValidateAggregate(PolicyRule r, PolicyCondition c, PolicyAggregate agg)
+    {
+        if (!PolicyAggregate.Functions.Contains(agg.Function, StringComparer.OrdinalIgnoreCase))
+            throw new PolicyValidationException(
+                $"rule '{r.Id}': invalid aggregate function '{agg.Function}' (expected {string.Join(", ", PolicyAggregate.Functions)}).");
+
+        if (!PolicyAggregate.Scopes.Contains(agg.Scope, StringComparer.OrdinalIgnoreCase))
+            throw new PolicyValidationException(
+                $"rule '{r.Id}': invalid aggregate scope '{agg.Scope}' (expected {string.Join(", ", PolicyAggregate.Scopes)}).");
+
+        try { PolicyAggregateProvider.ParseWindow(agg.Window); }
+        catch (InvalidOperationException ex) { throw new PolicyValidationException($"rule '{r.Id}': {ex.Message}"); }
+
+        if (agg.GroupBy is null || agg.GroupBy.Length == 0)
+            throw new PolicyValidationException($"rule '{r.Id}': aggregate groupBy must name at least one field (e.g. agentId).");
+
+        foreach (var g in agg.GroupBy)
+            if (!SafeFieldName.IsMatch(g ?? string.Empty))
+                throw new PolicyValidationException($"rule '{r.Id}': aggregate groupBy '{g}' is not a valid field name.");
+
+        // count ignores the field; every other function needs one to aggregate over.
+        if (!string.Equals(agg.Function, PolicyAggregate.Count, StringComparison.OrdinalIgnoreCase)
+            && !SafeFieldName.IsMatch(c.Field ?? string.Empty))
+            throw new PolicyValidationException(
+                $"rule '{r.Id}': aggregate function '{agg.Function}' needs a valid field to aggregate (got '{c.Field}').");
+
+        if (agg.Actions is { } acts && acts.Any(string.IsNullOrWhiteSpace))
+            throw new PolicyValidationException($"rule '{r.Id}': aggregate actions must not contain blank entries.");
+
+        // Ordering/equality against an aggregate only makes sense numerically.
+        if (c.Operator is "in" or "notIn" or "exists")
+            throw new PolicyValidationException(
+                $"rule '{r.Id}': operator '{c.Operator}' cannot be used with an aggregate (aggregates yield a number).");
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex SafeFieldName =
+        new("^[A-Za-z0-9_.-]{1,100}$", System.Text.RegularExpressions.RegexOptions.Compiled);
 }

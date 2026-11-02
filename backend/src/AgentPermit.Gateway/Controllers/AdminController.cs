@@ -91,6 +91,8 @@ public sealed class AdminController(
             r.ActionReceiptId,
             r.ActionRequestId,
             r.ReceiptNumber,
+            r.Kind,
+            r.SequenceNumber,
             r.ReceiptHash,
             r.PreviousReceiptHash,
             signed = !string.IsNullOrEmpty(r.SignatureValue),
@@ -127,16 +129,35 @@ public sealed class AdminController(
         if (signer.Enabled && !string.IsNullOrEmpty(receipt.SignatureValue))
             signatureOk = await signer.VerifyAsync(receipt.ReceiptHash, receipt.SignatureValue, ct);
 
+        // Chain continuity: the receipt's previousReceiptHash must be the hash of the receipt at sequence - 1
+        // (genesis has none). A gap or mismatch means a receipt was removed or the chain was forked.
+        bool? chainOk;
+        string? expectedPreviousHash = null;
+        if (receipt.SequenceNumber <= 0)
+            chainOk = receipt.PreviousReceiptHash is null;
+        else
+        {
+            var predecessor = await store.GetReceiptBySequenceAsync(receipt.SequenceNumber - 1, ct);
+            expectedPreviousHash = predecessor?.ReceiptHash;
+            chainOk = predecessor is not null
+                      && string.Equals(predecessor.ReceiptHash, receipt.PreviousReceiptHash, StringComparison.OrdinalIgnoreCase);
+        }
+
         return Ok(new
         {
             receipt.ReceiptNumber,
             receipt.ActionRequestId,
+            receipt.Kind,
+            receipt.SequenceNumber,
             storedHash = receipt.ReceiptHash,
             recomputedHash,
             integrityOk,
             signed = !string.IsNullOrEmpty(receipt.SignatureValue),
             signatureOk,
-            verified = integrityOk == true && (signatureOk ?? true)
+            previousReceiptHash = receipt.PreviousReceiptHash,
+            expectedPreviousHash,
+            chainOk,
+            verified = integrityOk == true && (signatureOk ?? true) && chainOk == true
         });
     }
 }

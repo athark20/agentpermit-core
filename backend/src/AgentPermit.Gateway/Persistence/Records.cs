@@ -72,6 +72,26 @@ public static class MetricsBuilder
     }
 }
 
+/// <summary>
+/// A windowed look-back over dbo.ActionRequest for policy aggregates: "values of <see cref="ValueField"/> in
+/// requests for these actions since <see cref="Since"/>, in these statuses, that share these group-by values".
+/// Field names are validated by the caller (<c>^[A-Za-z0-9_.-]+$</c>); stores must still parameterise values.
+/// </summary>
+public sealed class AggregateQuery
+{
+    public required string[] ActionIds { get; init; }
+    public required DateTimeOffset Since { get; init; }
+    /// <summary>Null = any status.</summary>
+    public string[]? Statuses { get; init; }
+    public string? AgentId { get; init; }
+    public string? RootAgentId { get; init; }
+    public string? InitiatingUserId { get; init; }
+    /// <summary>Request parameters that must equal these values (top-level JSON properties of the payload).</summary>
+    public IReadOnlyDictionary<string, string> ParameterEquals { get; init; } = new Dictionary<string, string>();
+    /// <summary>Top-level payload property whose value to return per matching row; null = return one null per row (count only).</summary>
+    public string? ValueField { get; init; }
+}
+
 /// <summary>Row in dbo.ActionRequest — the audit spine of every request.</summary>
 public sealed class ActionRequestRecord
 {
@@ -145,4 +165,25 @@ public sealed class ActionReceiptRecord
     public string? PreviousReceiptHash { get; set; }
     public string? SignatureValue { get; set; }
     public DateTimeOffset CreatedUtc { get; set; }
+
+    /// <summary>
+    /// Position in the chain (genesis = 0, strictly +1 per receipt, unique). Lets a verifier detect a deleted
+    /// receipt between two it holds, and lets the store refuse a fork when two writers race for the head.
+    /// </summary>
+    public long SequenceNumber { get; set; }
+
+    /// <summary>EXECUTION or DECISION (see <see cref="Domain.ReceiptKind"/>).</summary>
+    public string Kind { get; set; } = Domain.ReceiptKind.Execution;
 }
+
+/// <summary>The current tail of the receipt chain: the latest hash and its sequence number (null/-1 when empty).</summary>
+public readonly record struct ReceiptChainHead(string? Hash, long Sequence)
+{
+    public static readonly ReceiptChainHead Empty = new(null, -1);
+}
+
+/// <summary>
+/// Thrown by a store when a receipt insert would fork the chain: another writer appended to the same head
+/// first (unique sequence / previous-hash violation). The writer re-reads the head and retries.
+/// </summary>
+public sealed class ReceiptChainConflictException(string message) : Exception(message);

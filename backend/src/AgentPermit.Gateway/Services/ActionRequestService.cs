@@ -13,6 +13,14 @@ namespace AgentPermit.Gateway.Services;
 public sealed class ApprovalOptions
 {
     public int ExpiryHours { get; set; } = 24;
+
+    /// <summary>
+    /// When true, an approval whose rule names an approver role (e.g. "FinanceController") can only be decided
+    /// by a member of an approver group with that name — and if no such group is defined, nobody can decide it
+    /// (fail closed). When false (default, for backwards compatibility), a missing group falls back to the
+    /// generic Approver persona with a warning in the log. Set to true in production.
+    /// </summary>
+    public bool RequireNamedApproverGroups { get; set; } = false;
 }
 
 /// <summary>
@@ -25,6 +33,7 @@ public sealed class ActionRequestService(
     IAgentRegistry agents,
     IActionRegistry actions,
     IPolicyEngine policy,
+    PolicyAggregateProvider aggregateProvider,
     EnforcementGate enforcement,
     SafetyGate safety,
     ITargetSystemRegistry targets,
@@ -32,11 +41,42 @@ public sealed class ActionRequestService(
     FeedStatusTracker feedStatus,
     IAgentPermitStore store,
     ExecutionService execution,
+    ReceiptService receipts,
+    ReceiptOptions receiptOptions,
     ITeamsNotifier teams,
     SecurityOptions security,
     ApprovalOptions approvalOptions,
     ILogger<ActionRequestService> logger)
 {
+    /// <summary>
+    /// Mint a signed DECISION receipt for a DENY / REQUIRE_APPROVAL verdict and attach it to the response, so
+    /// what the agent TRIED is in the same tamper-evident chain as what it did. Best-effort: a signing or
+    /// store failure is logged and the (already persisted, already decided) response still goes back.
+    /// </summary>
+    private async Task AttachDecisionReceiptAsync(
+        ActionResponseDto response, ActionRequestRecord request, string decision, string policyVersion,
+        string? reasonCode, CancellationToken ct)
+    {
+        if (!receiptOptions.SignDecisions) return;
+        try
+        {
+            var receipt = await receipts.CreateAsync(new ReceiptInput
+            {
+                Request = request,
+                Decision = decision,
+                PolicyVersion = policyVersion,
+                ExecutionStatus = ExecutionStatus.NotExecuted,
+                Kind = ReceiptKind.Decision,
+                ReasonCode = reasonCode
+            }, ct);
+            response.Receipt = ReceiptService.ToDto(receipt, request.RequestPayloadHash);
+            response.ReceiptNumber = receipt.ReceiptNumber;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not mint a decision receipt for request {RequestId} (non-fatal).", request.ActionRequestId);
+        }
+    }
     public async Task<ActionResponseDto> ProcessAsync(ActionRequestDto dto, CallerContext caller, CancellationToken ct)
     {
         // A trusted connector may identify the CALLING agent by its own Entra Agent ID (its "badge").
@@ -84,6 +124,17 @@ public sealed class ActionRequestService(
         // Identity comes BEFORE the idempotency lookup: a key is private to the agent that owns it, so we
         // must know who is asking before we can tell whether they have asked before. (Looking the key up
         // first would let any caller replay another agent's result, or squat its key, with no identity.)
+        // A token the gateway itself validated is the strongest identity available.
+        //  - A token that was PRESENTED and rejected always ends the request here: falling back to the header
+        //    (or worse, the body) on a bad signature would make validation optional in practice.
+        //  - A token that was never presented ends it too once Required is on; until then the APIM header
+        //    path still works, so a fleet can be migrated agent by agent.
+        if (security.AgentAuth.IsConfigured && !caller.TokenVerified
+            && (caller.TokenPresented || security.AgentAuth.Required))
+            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                ReasonCode.TokenInvalid,
+                $"A valid agent access token is required. {caller.TokenError}".TrimEnd(), ct);
+
         if (security.EnforceIdentityBinding)
         {
             if (!caller.OriginVerified)
@@ -115,13 +166,21 @@ public sealed class ActionRequestService(
                     ReasonCode.AgentNotRegistered,
                     $"Authenticated identity '{caller.AuthenticatedClientId}' is not bound to a registered agent.", ct);
         }
-        else
+        else if (!security.AgentAuth.IsConfigured)
         {
             // No identity asserted and binding not enforced (local/dev): fall back to the body agentId.
+            // Never reached once agent-token validation is configured — a deployment that validates tokens
+            // must not accept a self-declared agentId, whatever else is or isn't set.
             agent = agents.Find(dto.AgentId);
             if (agent is null)
                 return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
                     ReasonCode.AgentNotRegistered, $"Agent '{dto.AgentId}' is not registered.", ct);
+        }
+        else
+        {
+            return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                ReasonCode.IdentityRequired,
+                "An authenticated agent identity is required; a body-supplied agentId is not accepted.", ct);
         }
 
         // Whenever an identity was asserted (connector-carried badge or token), a body agentId that is
@@ -143,6 +202,25 @@ public sealed class ActionRequestService(
         }
 
         var executingAgentId = agent.AgentId; // authoritative
+
+        // The human the agent acts for is DERIVED from a delegated token when one is present — never trusted
+        // from the body, because separation of duties (who may approve this) rests on it. A body value that
+        // disagrees with the token is a spoof attempt, exactly like a mismatched agentId.
+        if (caller.AuthenticatedUserId is { } tokenUser)
+        {
+            if (!string.IsNullOrWhiteSpace(dto.InitiatingUserId)
+                && !string.Equals(dto.InitiatingUserId.Trim(), tokenUser, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("Initiating-user spoof rejected: body '{Body}' != token '{Token}'.",
+                    dto.InitiatingUserId, tokenUser);
+                // DenyAsync records the denial against the resolved agent; don't double-count it here.
+                return await DenyAsync(dto, correlationId, payloadJson, payloadHash,
+                    ReasonCode.InitiatingUserMismatch,
+                    $"Body initiatingUserId '{dto.InitiatingUserId}' does not match the authenticated user.", ct, executingAgentId);
+            }
+            // Downstream (audit record, policy context, aggregates, approval checks) reads the verified value.
+            dto.InitiatingUserId = tokenUser;
+        }
 
         // --- Idempotency (scoped to the resolved agent): same key + same payload replays; same key +
         //     CHANGED payload is rejected. Another agent's use of the same key is invisible here. ---
@@ -190,6 +268,13 @@ public sealed class ActionRequestService(
                 ReasonCode.InvalidParameters, string.Join("; ", paramErrors), ct, executingAgentId);
         }
 
+        // --- Compute any windowed aggregates this snapshot's rules reference for this action ---
+        // Returns null (and makes no store call) when no rule uses one, so the engine keeps its "no
+        // per-request DB call" property for snapshots that don't aggregate. Fails closed: a store error
+        // surfaces rather than letting a limit rule evaluate against a missing value.
+        var aggregates = await aggregateProvider.ComputeAsync(
+            action, dto.Parameters, executingAgentId, dto.RootAgentId, dto.InitiatingUserId, ct);
+
         // --- Evaluate policy (against the active immutable snapshot) ---
         var computed = policy.Evaluate(new PolicyEvaluationContext
         {
@@ -197,7 +282,8 @@ public sealed class ActionRequestService(
             Parameters = dto.Parameters,
             AgentId = executingAgentId,
             RootAgentId = dto.RootAgentId,
-            InitiatingUserId = dto.InitiatingUserId
+            InitiatingUserId = dto.InitiatingUserId,
+            Aggregates = aggregates
         });
 
         // --- Apply the agent's rollout posture (secure-by-default warm-up gate) ---
@@ -238,13 +324,21 @@ public sealed class ActionRequestService(
         await PersistDecisionAsync(request.ActionRequestId, computed, effective, ct);
         await RecordObservationAsync(request, action, computed, effective, ct);
 
-        return effective.Decision switch
+        switch (effective.Decision)
         {
-            Decision.Allow => await HandleAllowAsync(request, dto.Parameters, computed, effective, correlationId, ct),
-            Decision.RequireApproval => await HandleRequireApprovalAsync(request, computed, effective, correlationId, ct),
-            _ => BuildResponse(request, correlationId, Decision.Deny, RequestState.Denied, computed.PolicyCode,
-                    computed.PolicyVersion, computed.ReasonCode, computed.Reason, payloadHash, effective)
-        };
+            case Decision.Allow:
+                return await HandleAllowAsync(request, dto.Parameters, computed, effective, correlationId, ct);
+            case Decision.RequireApproval:
+                return await HandleRequireApprovalAsync(request, computed, effective, correlationId, ct);
+            default:
+            {
+                var denied = BuildResponse(request, correlationId, Decision.Deny, RequestState.Denied, computed.PolicyCode,
+                    computed.PolicyVersion, computed.ReasonCode, computed.Reason, payloadHash, effective);
+                // A policy DENY is evidence too: sign it into the same chain as executions.
+                await AttachDecisionReceiptAsync(denied, request, Decision.Deny, computed.PolicyVersion, computed.ReasonCode, ct);
+                return denied;
+            }
+        }
     }
 
     private async Task<ActionResponseDto> HandleAllowAsync(
@@ -301,6 +395,8 @@ public sealed class ActionRequestService(
             RequestState.AwaitingApproval, result.PolicyCode, result.PolicyVersion,
             result.ReasonCode, result.Reason, request.RequestPayloadHash, effective);
         response.ApprovalRequestId = approval.ApprovalRequestId;
+        // The step-up itself is a signed decision; the execution receipt follows if/when a human approves.
+        await AttachDecisionReceiptAsync(response, request, Decision.RequireApproval, result.PolicyVersion, result.ReasonCode, ct);
         return response;
     }
 
@@ -362,8 +458,13 @@ public sealed class ActionRequestService(
             EvaluatedUtc = DateTimeOffset.UtcNow
         }, ct);
 
-        return BuildResponse(request, correlationId, Decision.Deny, RequestState.Denied,
+        var response = BuildResponse(request, correlationId, Decision.Deny, RequestState.Denied,
             "Gateway.Validation", "1.0.0", reasonCode, reason, payloadHash);
+        // Sign early-exit denials of a RESOLVED agent (they are attributable evidence of an attempt). Unresolved
+        // probes are audited but not signed: an anonymous caller must not be able to grow the chain at will.
+        if (identityResolved)
+            await AttachDecisionReceiptAsync(response, request, Decision.Deny, "1.0.0", reasonCode, ct);
+        return response;
     }
 
     private Task PersistDecisionAsync(
@@ -474,11 +575,13 @@ public sealed class ActionRequestService(
             reasonCode: null, decisionRecord?.DecisionReason, request.RequestPayloadHash);
         response.Replayed = true;
 
-        if (decision == Decision.Allow)
+        // Any receipt the request has — an execution receipt, or the signed decision receipt for a DENY /
+        // REQUIRE_APPROVAL — is replayed with it.
+        var receipt = await store.GetReceiptForRequestAsync(request.ActionRequestId, ct);
+        if (receipt is not null)
         {
-            var receipt = await store.GetReceiptForRequestAsync(request.ActionRequestId, ct);
-            if (receipt is not null)
-                response.Receipt = ReceiptService.ToDto(receipt, request.RequestPayloadHash);
+            response.Receipt = ReceiptService.ToDto(receipt, request.RequestPayloadHash);
+            response.ReceiptNumber = receipt.ReceiptNumber;
         }
         return response;
     }

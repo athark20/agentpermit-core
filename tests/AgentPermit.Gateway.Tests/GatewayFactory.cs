@@ -49,6 +49,24 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     /// <summary>Turn automatic quarantine off (deny-velocity trips then deny only the current request).</summary>
     public bool? DenyBreakerAutoQuarantine { get; init; }
 
+    /// <summary>Fail closed when a rule names an approver role for which no approver group is defined.</summary>
+    public bool RequireNamedApproverGroups { get; init; }
+
+    /// <summary>Mint signed DECISION receipts for DENY / REQUIRE_APPROVAL (default true).</summary>
+    public bool? SignDecisions { get; init; }
+
+    /// <summary>
+    /// Turn on gateway-side agent-token validation. The REAL JwtBearer handler runs; only its key material is
+    /// swapped for <see cref="TestTokens"/>' symmetric key, so no OIDC discovery is attempted.
+    /// </summary>
+    public bool AgentAuth { get; init; }
+
+    /// <summary>Deny action requests that carry no valid agent token (implies <see cref="AgentAuth"/>).</summary>
+    public bool AgentAuthRequired { get; init; }
+
+    /// <summary>Stop honouring a body/header-asserted agent badge (one connection per agent).</summary>
+    public bool? AllowBodyAssertedAgentIdentity { get; init; }
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("Persistence:Provider", "InMemory");
@@ -76,6 +94,18 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
             builder.UseSetting("DenyBreaker:MaxDenialsPerWindow", db.ToString());
         if (DenyBreakerAutoQuarantine is { } aq)
             builder.UseSetting("DenyBreaker:AutoQuarantine", aq ? "true" : "false");
+        if (RequireNamedApproverGroups)
+            builder.UseSetting("Approval:RequireNamedApproverGroups", "true");
+        if (SignDecisions is { } sd)
+            builder.UseSetting("Receipts:SignDecisions", sd ? "true" : "false");
+        if (AllowBodyAssertedAgentIdentity is { } allowBadge)
+            builder.UseSetting("Security:AllowBodyAssertedAgentIdentity", allowBadge ? "true" : "false");
+        if (AgentAuth || AgentAuthRequired)
+        {
+            builder.UseSetting("Security:AgentAuth:Authority", TestTokens.Authority);
+            builder.UseSetting("Security:AgentAuth:Audience", TestTokens.Audience);
+            if (AgentAuthRequired) builder.UseSetting("Security:AgentAuth:Required", "true");
+        }
 
         builder.ConfigureTestServices(services =>
         {
@@ -86,6 +116,26 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
 
             if (SignerOverride is not null)
                 services.AddSingleton(SignerOverride);
+
+            // Keep the real JwtBearer handler (so claim extraction, audience/issuer/lifetime checks and the
+            // failure path are all genuinely exercised) but validate against a local symmetric key instead of
+            // reaching Entra for discovery.
+            if (AgentAuth || AgentAuthRequired)
+                services.PostConfigure<Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerOptions>(
+                    AgentPermit.Gateway.Services.AgentAuthOptions.Scheme, o =>
+                    {
+                        o.Authority = null;
+                        o.MetadataAddress = null;
+                        o.RequireHttpsMetadata = false;
+                        o.TokenValidationParameters.IssuerSigningKey = TestTokens.SigningKey;
+                        o.TokenValidationParameters.ValidateIssuerSigningKey = true;
+                        o.TokenValidationParameters.ValidIssuer = TestTokens.Issuer;
+                        o.TokenValidationParameters.ValidateIssuer = true;
+                        o.TokenValidationParameters.ValidAudience = TestTokens.Audience;
+                        o.TokenValidationParameters.ValidateAudience = true;
+                        o.TokenValidationParameters.ValidateLifetime = true;
+                        o.TokenValidationParameters.ClockSkew = TimeSpan.FromSeconds(5);
+                    });
         });
     }
 }

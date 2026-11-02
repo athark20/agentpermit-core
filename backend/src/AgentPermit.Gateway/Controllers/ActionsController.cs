@@ -13,7 +13,7 @@ namespace AgentPermit.Gateway.Controllers;
 [ApiController]
 [Route("api/actions")]
 public sealed class ActionsController(
-    ActionRequestService service, SecurityOptions security, ILogger<ActionsController> logger) : ControllerBase
+    ActionRequestService service, CallerContextFactory callers, ILogger<ActionsController> logger) : ControllerBase
 {
     [HttpPost("request")]
     [ProducesResponseType(typeof(ActionResponseDto), StatusCodes.Status200OK)]
@@ -22,7 +22,7 @@ public sealed class ActionsController(
     {
         try
         {
-            var response = await service.ProcessAsync(request, BuildCaller(), ct);
+            var response = await service.ProcessAsync(request, await callers.BuildAsync(HttpContext), ct);
             Response.Headers["X-Correlation-Id"] = response.CorrelationId;
             return Ok(response);
         }
@@ -45,22 +45,5 @@ public sealed class ActionsController(
 
         Response.Headers["X-Correlation-Id"] = status.CorrelationId;
         return Ok(status);
-    }
-
-    /// <summary>Establish the caller identity from APIM-forwarded headers (never from the body).</summary>
-    private CallerContext BuildCaller()
-    {
-        var clientId = Request.Headers[security.IdentityHeader].ToString();
-        var origin = Request.Headers[security.ApimOriginHeader].ToString();
-        var agentIdentity = Request.Headers[security.AgentIdentityHeader].ToString();
-        return new CallerContext
-        {
-            AuthenticatedClientId = string.IsNullOrWhiteSpace(clientId) ? null : clientId,
-            OriginVerified = !string.IsNullOrEmpty(security.ApimSharedSecret)
-                             && string.Equals(origin, security.ApimSharedSecret, StringComparison.Ordinal),
-            AssertedAgentIdentity = string.IsNullOrWhiteSpace(agentIdentity) ? null : agentIdentity,
-            FromTrustedConnector = !string.IsNullOrWhiteSpace(clientId)
-                && security.TrustedConnectorClientIds.Contains(clientId, StringComparer.OrdinalIgnoreCase),
-        };
     }
 }

@@ -11,6 +11,13 @@ public sealed class PolicyEvaluationContext
     public required string AgentId { get; init; }
     public string? RootAgentId { get; init; }
     public string? InitiatingUserId { get; init; }
+
+    /// <summary>
+    /// Pre-computed windowed aggregates keyed by <see cref="PolicyAggregate.Key"/>, supplied by
+    /// <see cref="PolicyAggregateProvider"/> for every aggregate condition the active snapshot has for this
+    /// action. Keeps the engine itself synchronous and deterministic; null when the snapshot uses none.
+    /// </summary>
+    public IReadOnlyDictionary<string, JsonElement>? Aggregates { get; init; }
 }
 
 /// <summary>The outcome of evaluating a request against policy.</summary>

@@ -114,6 +114,36 @@ public sealed class SqlAgentPermitStore(string connectionString) : IAgentPermitS
         return row?.Map();
     }
 
+    public async Task<IReadOnlyList<string?>> ListParameterValuesAsync(AggregateQuery q, CancellationToken ct)
+    {
+        // Field names are validated upstream (^[A-Za-z0-9_.-]+$) and are only ever used inside a JSON path
+        // literal; every VALUE is a parameter. JSON_VALUE returns nvarchar(4000), so numbers come back in
+        // their JSON text form and are parsed by the caller.
+        var p = new DynamicParameters();
+        p.Add("actions", q.ActionIds);
+        p.Add("since", q.Since.UtcDateTime);
+        var sql = new System.Text.StringBuilder();
+        sql.Append(q.ValueField is null
+            ? "SELECT CAST(NULL AS nvarchar(4000)) AS V"
+            : $"SELECT JSON_VALUE(RequestPayloadJson, '$.\"{q.ValueField}\"') AS V");
+        sql.Append(" FROM dbo.ActionRequest WHERE ActionId IN @actions AND CreatedUtc >= @since");
+        if (q.Statuses is { Length: > 0 }) { sql.Append(" AND Status IN @statuses"); p.Add("statuses", q.Statuses); }
+        if (q.AgentId is not null) { sql.Append(" AND ExecutingAgentId = @agent"); p.Add("agent", q.AgentId); }
+        if (q.RootAgentId is not null) { sql.Append(" AND ISNULL(RootAgentId, '') = @root"); p.Add("root", q.RootAgentId); }
+        if (q.InitiatingUserId is not null) { sql.Append(" AND ISNULL(InitiatingUserId, '') = @user"); p.Add("user", q.InitiatingUserId); }
+        var i = 0;
+        foreach (var (name, value) in q.ParameterEquals)
+        {
+            var pn = $"pv{i++}";
+            sql.Append($" AND JSON_VALUE(RequestPayloadJson, '$.\"{name}\"') = @{pn}");
+            p.Add(pn, value);
+        }
+
+        await using var c = Open();
+        var rows = await c.QueryAsync<string?>(sql.ToString(), p);
+        return rows.ToList();
+    }
+
     public async Task InsertActionRequestAsync(ActionRequestRecord r, CancellationToken ct)
     {
         await using var c = Open();
@@ -280,19 +310,32 @@ public sealed class SqlAgentPermitStore(string connectionString) : IAgentPermitS
             });
     }
 
-    public async Task<string?> GetLatestReceiptHashAsync(CancellationToken ct)
+    public async Task<ReceiptChainHead> GetReceiptChainHeadAsync(CancellationToken ct)
     {
+        // The chain is ordered by SequenceNumber, not by wall-clock: replicas' clocks can disagree.
         await using var c = Open();
-        return await c.QueryFirstOrDefaultAsync<string?>(
-            "SELECT TOP 1 ReceiptHash FROM dbo.ActionReceipt ORDER BY CreatedUtc DESC, ReceiptNumber DESC");
+        var row = await c.QueryFirstOrDefaultAsync<Row.ChainHead>(
+            "SELECT TOP 1 ReceiptHash, SequenceNumber FROM dbo.ActionReceipt ORDER BY SequenceNumber DESC");
+        return row is null ? ReceiptChainHead.Empty : new ReceiptChainHead(row.ReceiptHash, row.SequenceNumber);
     }
 
     public async Task<ActionReceiptRecord?> GetReceiptForRequestAsync(Guid actionRequestId, CancellationToken ct)
     {
         await using var c = Open();
         var row = await c.QueryFirstOrDefaultAsync<Row.Receipt>(
-            "SELECT TOP 1 * FROM dbo.ActionReceipt WHERE ActionRequestId = @id ORDER BY CreatedUtc DESC",
+            """
+            SELECT TOP 1 * FROM dbo.ActionReceipt WHERE ActionRequestId = @id
+            ORDER BY CASE WHEN Kind = 'EXECUTION' THEN 0 ELSE 1 END, SequenceNumber DESC
+            """,
             new { id = actionRequestId });
+        return row?.Map();
+    }
+
+    public async Task<ActionReceiptRecord?> GetReceiptBySequenceAsync(long sequenceNumber, CancellationToken ct)
+    {
+        await using var c = Open();
+        var row = await c.QueryFirstOrDefaultAsync<Row.Receipt>(
+            "SELECT TOP 1 * FROM dbo.ActionReceipt WHERE SequenceNumber = @seq", new { seq = sequenceNumber });
         return row?.Map();
     }
 
@@ -300,28 +343,41 @@ public sealed class SqlAgentPermitStore(string connectionString) : IAgentPermitS
     {
         await using var c = Open();
         var rows = await c.QueryAsync<Row.Receipt>(
-            "SELECT TOP (@take) * FROM dbo.ActionReceipt ORDER BY CreatedUtc DESC, ReceiptNumber DESC",
+            "SELECT TOP (@take) * FROM dbo.ActionReceipt ORDER BY SequenceNumber DESC",
             new { take = take <= 0 ? 50 : take });
         return rows.Select(x => x.Map()).ToList();
     }
 
     public async Task InsertReceiptAsync(ActionReceiptRecord r, CancellationToken ct)
     {
+        // Requires scripts/sql/2026-10-receipt-chain-sequence.sql: SequenceNumber + Kind columns, a UNIQUE
+        // index on SequenceNumber and a filtered UNIQUE index on PreviousReceiptHash. Those constraints are
+        // what make the chain fork-proof across replicas: the loser of a race gets a unique-key violation,
+        // surfaced here as ReceiptChainConflictException so the writer re-reads the head and retries.
         await using var c = Open();
-        await c.ExecuteAsync(
-            """
-            INSERT INTO dbo.ActionReceipt
-              (ActionReceiptId, ActionRequestId, ReceiptNumber, ReceiptJson, ReceiptHash,
-               PreviousReceiptHash, SignatureValue, CreatedUtc)
-            VALUES
-              (@ActionReceiptId, @ActionRequestId, @ReceiptNumber, @ReceiptJson, @ReceiptHash,
-               @PreviousReceiptHash, @SignatureValue, @CreatedUtc);
-            """,
-            new
-            {
-                r.ActionReceiptId, r.ActionRequestId, r.ReceiptNumber, r.ReceiptJson, r.ReceiptHash,
-                r.PreviousReceiptHash, r.SignatureValue, CreatedUtc = r.CreatedUtc.UtcDateTime
-            });
+        try
+        {
+            await c.ExecuteAsync(
+                """
+                INSERT INTO dbo.ActionReceipt
+                  (ActionReceiptId, ActionRequestId, ReceiptNumber, ReceiptJson, ReceiptHash,
+                   PreviousReceiptHash, SignatureValue, CreatedUtc, SequenceNumber, Kind)
+                VALUES
+                  (@ActionReceiptId, @ActionRequestId, @ReceiptNumber, @ReceiptJson, @ReceiptHash,
+                   @PreviousReceiptHash, @SignatureValue, @CreatedUtc, @SequenceNumber, @Kind);
+                """,
+                new
+                {
+                    r.ActionReceiptId, r.ActionRequestId, r.ReceiptNumber, r.ReceiptJson, r.ReceiptHash,
+                    r.PreviousReceiptHash, r.SignatureValue, CreatedUtc = r.CreatedUtc.UtcDateTime,
+                    r.SequenceNumber, r.Kind
+                });
+        }
+        catch (SqlException ex) when (ex.Errors.Cast<SqlError>().Any(e => e.Number is 2601 or 2627))
+        {
+            throw new ReceiptChainConflictException(
+                $"Receipt chain conflict at sequence {r.SequenceNumber} (another writer appended first).");
+        }
     }
 
     /// <summary>Row DTOs read DATETIME2 as DateTime, then project to UTC DateTimeOffset records.</summary>
@@ -428,13 +484,23 @@ public sealed class SqlAgentPermitStore(string connectionString) : IAgentPermitS
             public string? PreviousReceiptHash { get; set; }
             public string? SignatureValue { get; set; }
             public DateTime CreatedUtc { get; set; }
+            public long SequenceNumber { get; set; }
+            public string? Kind { get; set; }
 
             public ActionReceiptRecord Map() => new()
             {
                 ActionReceiptId = ActionReceiptId, ActionRequestId = ActionRequestId, ReceiptNumber = ReceiptNumber,
                 ReceiptJson = ReceiptJson, ReceiptHash = ReceiptHash, PreviousReceiptHash = PreviousReceiptHash,
-                SignatureValue = SignatureValue, CreatedUtc = Utc(CreatedUtc)
+                SignatureValue = SignatureValue, CreatedUtc = Utc(CreatedUtc),
+                SequenceNumber = SequenceNumber,
+                Kind = string.IsNullOrEmpty(Kind) ? Domain.ReceiptKind.Execution : Kind
             };
+        }
+
+        public sealed class ChainHead
+        {
+            public string ReceiptHash { get; set; } = "";
+            public long SequenceNumber { get; set; }
         }
     }
 }

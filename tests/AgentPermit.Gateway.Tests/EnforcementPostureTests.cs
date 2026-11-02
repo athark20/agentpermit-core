@@ -45,7 +45,7 @@ public sealed class EnforcementPostureTests
         Assert.Equal(ReasonCode.PolicyDeny, body.ReasonCode);
         Assert.Equal(EnforcementMode.Enforced, body.EnforcementMode);
         Assert.Null(body.ComputedDecision);                         // no warm-up divergence
-        Assert.Null(body.Receipt);
+        Assert.Equal("DECISION", body.Receipt?.Kind);               // signed decision receipt, nothing executed
         Assert.Equal(0, factory.Services.GetRequiredService<IRefundLedger>().Count);
     }
 
