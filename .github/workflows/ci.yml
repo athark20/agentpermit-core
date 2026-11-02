@@ -40,6 +40,30 @@ jobs:
           --logger "trx;LogFileName=gateway.trx"
           --results-directory TestResults
 
+      # Surface each failing test as a workflow annotation, so a failure is legible from the PR (and the
+      # checks API) without opening the raw log.
+      - name: Report failing tests
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for trx in TestResults/*.trx; do
+            python3 - "$trx" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
+          root = ET.parse(sys.argv[1]).getroot()
+          for r in root.findall('.//t:UnitTestResult', ns):
+              if r.get('outcome') != 'Failed':
+                  continue
+              name = r.get('testName', '?')
+              msg = (r.findtext('.//t:Message', default='', namespaces=ns) or '').strip()
+              trace = (r.findtext('.//t:StackTrace', default='', namespaces=ns) or '').strip()
+              first = next((l.strip() for l in trace.splitlines() if l.strip()), '')
+              one = ' | '.join(x for x in (msg, first) if x).replace('\r', ' ').replace('\n', ' ')
+              print(f"::error title=FAILED {name}::{one[:800]}")
+          PY
+          done
+
       - name: Publish test summary
         if: always()
         uses: dorny/test-reporter@v1

@@ -15,7 +15,7 @@ namespace AgentPermit.Gateway.Controllers;
 [ApiController]
 [Route("mcp")]
 public sealed class McpController(
-    McpToolCatalog catalog, ActionRequestService actions, SecurityOptions security, ILogger<McpController> logger) : ControllerBase
+    McpToolCatalog catalog, ActionRequestService actions, CallerContextFactory callers, ILogger<McpController> logger) : ControllerBase
 {
     private const string DefaultProtocolVersion = "2024-11-05";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -98,7 +98,7 @@ public sealed class McpController(
 
         try
         {
-            var response = await actions.ProcessAsync(dto, BuildCaller(), ct);
+            var response = await actions.ProcessAsync(dto, await callers.BuildAsync(HttpContext), ct);
             // A governance DENY/REQUIRE_APPROVAL is a valid tool result, not a protocol error — surface it as content.
             return Result(ToolContent(JsonSerializer.Serialize(response, Json), isError: false));
         }
@@ -110,23 +110,6 @@ public sealed class McpController(
 
     private static object ToolContent(string text, bool isError) =>
         new { content = new[] { new { type = "text", text } }, isError };
-
-    /// <summary>Identity is established from the same APIM-forwarded headers as the REST path — never the body.</summary>
-    private CallerContext BuildCaller()
-    {
-        var clientId = Request.Headers[security.IdentityHeader].ToString();
-        var origin = Request.Headers[security.ApimOriginHeader].ToString();
-        var agentIdentity = Request.Headers[security.AgentIdentityHeader].ToString();
-        return new CallerContext
-        {
-            AuthenticatedClientId = string.IsNullOrWhiteSpace(clientId) ? null : clientId,
-            OriginVerified = !string.IsNullOrEmpty(security.ApimSharedSecret)
-                             && string.Equals(origin, security.ApimSharedSecret, StringComparison.Ordinal),
-            AssertedAgentIdentity = string.IsNullOrWhiteSpace(agentIdentity) ? null : agentIdentity,
-            FromTrustedConnector = !string.IsNullOrWhiteSpace(clientId)
-                && security.TrustedConnectorClientIds.Contains(clientId, StringComparer.OrdinalIgnoreCase),
-        };
-    }
 
     /// <summary>JSON-RPC 2.0 response envelope; omits the field that isn't set (result XOR error).</summary>
     private sealed class Envelope

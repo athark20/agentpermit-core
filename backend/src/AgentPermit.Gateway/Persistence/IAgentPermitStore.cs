@@ -27,6 +27,12 @@ public interface IAgentPermitStore
     /// <summary>Per-agent activity summary since <paramref name="since"/> — the centralized fleet trail view.</summary>
     Task<IReadOnlyList<AgentTrailRow>> GetAgentTrailSummaryAsync(DateTimeOffset since, CancellationToken ct);
 
+    /// <summary>
+    /// Windowed look-back for policy aggregates (see <see cref="AggregateQuery"/>): one entry per matching
+    /// request, holding the requested payload field's value as a string (numbers in invariant form), or null.
+    /// </summary>
+    Task<IReadOnlyList<string?>> ListParameterValuesAsync(AggregateQuery query, CancellationToken ct);
+
     Task InsertActionRequestAsync(ActionRequestRecord record, CancellationToken ct);
 
     Task UpdateActionRequestStatusAsync(Guid actionRequestId, string status, CancellationToken ct);

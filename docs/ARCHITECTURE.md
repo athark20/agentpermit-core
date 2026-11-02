@@ -67,6 +67,15 @@ Both front doors — REST `POST /api/actions/request` and MCP `POST /mcp` (`tool
 ### Policy engine
 Policies are **data, not code**: an immutable, versioned **`PolicySnapshot`** (priority-ordered rules; operators `equals/gt/gte/lt/lte/in/…`; default-deny). Rules match on `actionId` + parameter conditions and yield a decision + optional approver role. Changing a threshold = publishing a new snapshot, no redeploy.
 
+**Windowed aggregates (limits, not just thresholds).** A condition may carry an `aggregate`, which makes it read the field *summed / counted / de-duplicated / maximised over a look-back window* instead of from this request alone — including the request being decided:
+
+```jsonc
+{ "field": "amount", "operator": "greaterThan", "value": 50000,
+  "aggregate": { "function": "sum", "window": "PT24H", "groupBy": ["agentId", "customerId"] } }
+```
+
+This is what closes salami-slicing: a per-request limit of 1,000 says nothing about a hundred 999s. `groupBy` scopes the window to what must match this request (`agentId`, `rootAgentId`, `initiatingUserId`, or any request parameter such as a customer or beneficiary), `actions` aggregates across several actions, and `scope` chooses committed exposure (ran or pending — the default) or every request including denials. Values are computed once per distinct spec, before the synchronous engine runs, by `PolicyAggregateProvider`; **a snapshot with no aggregate conditions makes no store call at all**, so the engine keeps its per-request cost for everyone else. Aggregates are validated at publish time (function, ISO-8601 window, group-by and field names, numeric operator) and the computed values are written into the decision trace, so an auditor sees the number the verdict rested on. Failure is closed: a store error fails the request rather than letting a limit rule evaluate against a missing value. Under true concurrency two requests can read the same prior total, so the velocity breakers remain the hard backstop.
+
 ### Policy publisher (signed, live-swappable)
 `POST /api/policies/publish` validates → hashes → **RS256-signs in Key Vault** → writes an immutable versioned snapshot to Blob → atomically swaps the runtime-active snapshot. On startup the gateway loads and **re-verifies the signature**; a tampered snapshot is refused. The plain-language **Rules** editor in the console produces these snapshots.
 
@@ -75,6 +84,10 @@ Each action/target carries a **consequence tier** (LOW/MEDIUM/HIGH/CRITICAL), cl
 
 ### Identity binding
 APIM forwards the authenticated app id (`azp`) as `X-Agent-Client-Id`; the gateway resolves the registered agent from it. A body `agentId` that disagrees → **DENY `AGENT_IDENTITY_MISMATCH`**. A shared connector may assert a specific agent's badge (`agentIdentity`), trusted only when the caller is a registered connector app. Direct-to-backend calls lacking the APIM-origin secret → **DENY `NOT_FROM_APIM`**.
+
+**Gateway-side token validation (`Security:AgentAuth`).** Configure an authority + audience and the gateway validates the **agent's own bearer token itself** — signature, issuer, audience, lifetime — on both front doors. The agent is then the validated token's `azp`/`appid` and the forwarded header is ignored, so a leaked APIM shared secret, or an ingress reachable around APIM, no longer lets a caller impersonate a registered agent. Rules once configured: a token that is **presented and rejected** is always **DENY `TOKEN_INVALID`** (never downgraded to the header path); a **missing** token is refused too once `Required` is on, so a fleet can migrate agent by agent; and a **body `agentId` is never an identity** — the local/dev fallback is off whenever token validation is configured.
+
+A **delegated** token also yields the verified human: `preferred_username`/`upn`, else a delegated-scope token's `oid` (an app-only token's `oid` is the service principal's and is *not* treated as a user, honouring `idtyp=app`). That becomes `initiatingUserId`, which is what separation-of-duties checks rest on; a body value that disagrees → **DENY `INITIATING_USER_MISMATCH`**. Finally, `Security:AllowBodyAssertedAgentIdentity=false` retires the shared-connector badge once every agent has its own Entra Agent ID — a badge is an assertion the gateway cannot verify, so any agent behind that connector could otherwise claim another's rules and posture.
 
 ### Idempotency & state machine
 The caller supplies a unique `idempotencyKey` (≥ 8 chars). Same key + same payload → replay of the prior result (no double execution). Same key + **changed** payload → **DENY `IDEMPOTENCY_PAYLOAD_MISMATCH`**. Keys are an **agent-private namespace**: the lookup runs *after* identity binding and is scoped to the resolved agent (`UNIQUE (ExecutingAgentId, IdempotencyKey)`), so agent B presenting agent A's key gets its own fresh request, never A's replayed receipt, and an unauthenticated probe cannot reserve a key that a real agent will use later — unresolved-identity denials are filed under a gateway-generated key with the supplied key kept in the decision trace. Requests move through a validated canonical state machine (RECEIVED → … → SUCCEEDED/FAILED/EXPIRED/CANCELLED).
@@ -142,6 +155,8 @@ All three resolve identity from the same APIM-forwarded headers and run the same
 | Threat | Control |
 |---|---|
 | Agent spoofs another agent's permissions | Identity bound to authenticated token; body `agentId` must match |
+| Forged identity header (leaked APIM secret, ingress reachable around APIM) | `Security:AgentAuth` — the gateway validates the agent's token itself; the header is ignored and a rejected token is `TOKEN_INVALID` |
+| Agent claims a human it isn't acting for, to dodge separation of duties | `initiatingUserId` derived from a delegated token; a disagreeing body value is `INITIATING_USER_MISMATCH` |
 | Agent calls the target directly, around the gateway | Target-side identity lockdown + auto-DLP; `NOT_FROM_APIM` on direct hits |
 | Replay / double execution | Caller-owned idempotency + dup-guarded execution |
 | Payload swapped between request and approval | Frozen payload hash; `PayloadChanged` → 409 |
@@ -152,3 +167,4 @@ All three resolve identity from the same APIM-forwarded headers and run the same
 | Tampered policy | Signed snapshots, re-verified at load; tampered = refused |
 | Runaway agent / emergency | Velocity breaker + global kill switch, ahead of policy |
 | Agent probes a block (retries around a refusal, tries other actions/parameters, mis-asserts identity) | Deny-velocity breaker → automatic per-agent quarantine until an admin lifts it; unresolved identities never count |
+| Salami-slicing under a per-request limit (100 × 999 instead of one 99,900); fan-out across many counterparties | Windowed aggregate conditions (sum / count / distinct / max per agent, user or counterparty), enforced on the request that would breach |
