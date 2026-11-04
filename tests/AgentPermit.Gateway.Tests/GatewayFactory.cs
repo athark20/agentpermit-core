@@ -34,6 +34,19 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
     /// <summary>Configure an admin API key (gates policy publishing).</summary>
     public string? AdminApiKey { get; init; }
 
+    /// <summary>
+    /// Turn on console sign-in (AdminAuth), so a person's Entra ID token is accepted as in production. The REAL
+    /// JwtBearer handler runs; only its key material is swapped for <see cref="TestTokens"/>' key. Mint person
+    /// tokens for audience <see cref="ConsoleAudience"/>.
+    /// </summary>
+    public bool ConsoleSignIn { get; init; }
+
+    /// <summary>Audience of a person's console token when <see cref="ConsoleSignIn"/> is on.</summary>
+    public const string ConsoleAudience = "api://agentpermit-console";
+
+    /// <summary>Legacy: let the shared admin key approve or reject (Teams:AllowWorkflowDecisions).</summary>
+    public bool AllowWorkflowDecisions { get; init; }
+
     /// <summary>Connector client ids trusted to carry a per-agent badge (X-Agent-Identity / body agentIdentity).</summary>
     public string[]? TrustedConnectorClientIds { get; init; }
 
@@ -83,6 +96,13 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
             builder.UseSetting("Security:ApimSharedSecret", ApimSharedSecret);
         if (AdminApiKey is not null)
             builder.UseSetting("Admin:ApiKey", AdminApiKey);
+        if (ConsoleSignIn)
+        {
+            builder.UseSetting("AdminAuth:Authority", TestTokens.Authority);
+            builder.UseSetting("AdminAuth:Audience", ConsoleAudience);
+        }
+        if (AllowWorkflowDecisions)
+            builder.UseSetting("Teams:AllowWorkflowDecisions", "true");
         if (TrustedConnectorClientIds is not null)
             for (var i = 0; i < TrustedConnectorClientIds.Length; i++)
                 builder.UseSetting($"Security:TrustedConnectorClientIds:{i}", TrustedConnectorClientIds[i]);
@@ -135,6 +155,23 @@ public sealed class GatewayFactory : WebApplicationFactory<Program>
                         o.TokenValidationParameters.ValidateAudience = true;
                         o.TokenValidationParameters.ValidateLifetime = true;
                         o.TokenValidationParameters.ClockSkew = TimeSpan.FromSeconds(5);
+                    });
+
+            // Same for the console (person) scheme. Dropping the configuration manager means no OIDC discovery
+            // is attempted whichever order the post-configure steps run in.
+            if (ConsoleSignIn)
+                services.PostConfigure<Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerOptions>(
+                    Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme, o =>
+                    {
+                        o.Authority = null;
+                        o.MetadataAddress = null;
+                        o.ConfigurationManager = null;
+                        o.RequireHttpsMetadata = false;
+                        o.TokenValidationParameters.IssuerSigningKey = TestTokens.SigningKey;
+                        o.TokenValidationParameters.ValidateIssuerSigningKey = true;
+                        o.TokenValidationParameters.ValidIssuer = TestTokens.Issuer;
+                        o.TokenValidationParameters.ValidAudience = ConsoleAudience;
+                        o.TokenValidationParameters.ValidateLifetime = true;
                     });
         });
     }

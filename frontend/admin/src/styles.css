@@ -549,6 +549,9 @@ h3.sec { margin: 22px 0 8px; font-size: 14px; }
 .permit-row { border: 1px solid var(--border, #e6e2d9); border-radius: 10px; padding: 14px 16px; background: #fff; }
 .permit-row .rules { margin: 8px 0 0; padding-left: 18px; }
 .permit-row .rules li { margin: 3px 0; color: var(--text, #3a3a3a); }
+.permit-row.focused { border-color: var(--brand-2); box-shadow: var(--ring); }
+.approval-details { margin-top: 12px; }
+.approval-details .table { margin: 0 0 6px; }
 .steps { display: flex; gap: 10px; margin: 6px 0 16px; }
 .step { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted-light, #9a9488); }
 .step .step-dot { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--border, #ddd); font-size: 12px; font-weight: 700; }

@@ -25,7 +25,7 @@ export function App() {
       case 'rules': return <Rules />
       case 'limits': return <LimitsAndSafety />
       case 'activity': return <WhatsHappening />
-      case 'approvals': return <ThingsNeedingYou />
+      case 'approvals': return <ThingsNeedingYou focus={sub} />
       case 'onboarding': return <Onboarding />
       case 'integration': return <IntegrationGuide sub={sub} navigate={navigate} />
       case 'investigate': return <Investigate sub={sub} navigate={navigate} />

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError, reasonOf } from '../api'
 import { useAsync } from '../hooks'
 import { useAccess } from '../access'
@@ -322,19 +322,72 @@ export function WhatsHappening() {
 interface Approval {
   approvalRequestId: string; actionId: string; agentId: string
   amount?: number; currency?: string; customerId?: string; reason?: string
-  requestedAtUtc: string
+  /** The complete frozen payload: every field the approver is signing off on. */
+  parameters?: Record<string, unknown>
+  initiatingUserId?: string; approverRole?: string
+  status: string; payloadHash: string
+  requestedAtUtc: string; expiresAtUtc?: string
 }
 
-export function ThingsNeedingYou() {
+function show(v: unknown): string {
+  if (v == null || v === '') return '—'
+  return typeof v === 'object' ? JSON.stringify(v) : String(v)
+}
+
+function decidedWord(status: string): string {
+  switch (status) {
+    case 'Approved': return 'approved'
+    case 'Rejected': return 'declined'
+    case 'Expired': return 'closed because nobody decided in time'
+    default: return 'decided'
+  }
+}
+
+/** Every field of the request exactly as the agent sent it, plus who asked and until when. */
+function ApprovalDetails({ a }: { a: Approval }) {
+  return (
+    <div className="approval-details">
+      <table className="table">
+        <tbody>
+          {Object.entries(a.parameters ?? {}).map(([k, v]) => (
+            <tr key={k}><td className="muted" style={{ width: '38%' }}>{k}</td><td className="mono">{show(v)}</td></tr>
+          ))}
+          <tr><td className="muted">Asked for by</td><td>{a.initiatingUserId ?? '— (not recorded)'}</td></tr>
+          <tr><td className="muted">Who can approve</td><td>{a.approverRole ?? 'Any approver'}</td></tr>
+          <tr><td className="muted">Expires</td><td>{a.expiresAtUtc ? new Date(a.expiresAtUtc).toLocaleString() : '—'}</td></tr>
+        </tbody>
+      </table>
+      <p className="muted small">You are approving exactly these details. If any of them changes before the action runs, your approval no longer counts.</p>
+    </div>
+  )
+}
+
+/**
+ * Approvals waiting for a person. A Teams card links here as #/approvals/<id>: that request opens with every
+ * detail shown, and the approver decides with their own sign-in.
+ */
+export function ThingsNeedingYou({ focus }: { focus?: string }) {
   const list = useAsync<Approval[]>(() => api('/api/approvals/pending'))
+  const linked = useAsync<Approval | null>(
+    () => (focus ? api<Approval>(`/api/approvals/${focus}`).catch(() => null) : Promise.resolve(null)), [focus])
+  const [open, setOpen] = useState<string | undefined>(focus)
   const [busy, setBusy] = useState<string>()
   const toast = useToast()
   const access = useAccess()
+  const focusRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { setOpen(focus) }, [focus])
+  useEffect(() => {
+    if (!list.loading) focusRef.current?.scrollIntoView({ block: 'center' })
+  }, [list.loading, focus])
 
   async function decide(a: Approval, ok: boolean) {
     setBusy(a.approvalRequestId)
     try {
-      await api(`/api/approvals/${a.approvalRequestId}/${ok ? 'approve' : 'reject'}`, { method: 'POST', body: JSON.stringify({}) })
+      // Tie the decision to what was on screen: if the details changed since, the gateway refuses it.
+      await api(`/api/approvals/${a.approvalRequestId}/${ok ? 'approve' : 'reject'}`, {
+        method: 'POST', body: JSON.stringify({ expectedPayloadHash: a.payloadHash }),
+      })
       toast.success(ok ? 'Approved' : 'Rejected', `The request has been ${ok ? 'approved' : 'rejected'}.`)
       list.reload()
     } catch (e) {
@@ -343,6 +396,9 @@ export function ThingsNeedingYou() {
     } finally { setBusy(undefined) }
   }
 
+  const pending = list.data ?? []
+  const linkedNotWaiting = !!focus && !list.loading && !linked.loading && !pending.some((a) => a.approvalRequestId === focus)
+
   return (
     <div>
       <PageHeader title="Things needing you" />
@@ -350,30 +406,49 @@ export function ThingsNeedingYou() {
       {!access.loading && !access.canApprove && (
         <p className="persona-note">You can view these requests, but only people with the <b>Approver</b> role can approve or decline. Ask your administrator if you need it.</p>
       )}
+      {linkedNotWaiting && (
+        <p className="persona-note">
+          {linked.data && linked.data.status !== 'Pending'
+            ? `The request you opened was already ${decidedWord(linked.data.status)}.`
+            : 'The request you opened is not waiting for a decision any more.'}
+        </p>
+      )}
 
       <section className="card">
-        {list.loading ? <Loading what="approvals" /> : (list.data?.length ? (
+        {list.loading ? <Loading what="approvals" /> : (pending.length ? (
           <div className="stack">
-            {list.data.map((a) => (
-              <div key={a.approvalRequestId} className="permit-row">
-                <div className="row" style={{ margin: 0, alignItems: 'center' }}>
-                  <div>
-                    <b>{a.agentId}</b> wants to {prettyAction(a.actionId)}
-                    {a.amount != null && <> — <b>{a.amount} {a.currency ?? ''}</b></>}
-                    {a.customerId && <span className="muted"> for {a.customerId}</span>}
-                    <div className="muted small">{a.reason || ''} · asked {timeAgo(a.requestedAtUtc)}</div>
-                  </div>
-                  {access.canApprove ? (
-                    <div className="row" style={{ margin: 0, marginLeft: 'auto', gap: 8 }}>
-                      <button className="btn primary" disabled={busy === a.approvalRequestId} onClick={() => decide(a, true)}>Approve</button>
-                      <button className="btn danger" disabled={busy === a.approvalRequestId} onClick={() => decide(a, false)}>Decline</button>
+            {pending.map((a) => {
+              const isOpen = open === a.approvalRequestId
+              const isFocus = focus === a.approvalRequestId
+              return (
+                <div key={a.approvalRequestId} ref={isFocus ? focusRef : undefined}
+                  className={`permit-row${isFocus ? ' focused' : ''}`}>
+                  <div className="row" style={{ margin: 0, alignItems: 'center' }}>
+                    <div>
+                      <b>{a.agentId}</b> wants to {prettyAction(a.actionId)}
+                      {a.amount != null && <> — <b>{a.amount} {a.currency ?? ''}</b></>}
+                      {a.customerId && <span className="muted"> for {a.customerId}</span>}
+                      <div className="muted small">{a.reason || ''} · asked {timeAgo(a.requestedAtUtc)}</div>
                     </div>
-                  ) : (
-                    <span className="muted small" style={{ marginLeft: 'auto' }}>Waiting for an approver</span>
-                  )}
+                    <div className="row" style={{ margin: 0, marginLeft: 'auto', gap: 8, alignItems: 'center' }}>
+                      <button className="btn ghost small" aria-expanded={isOpen}
+                        onClick={() => setOpen(isOpen ? undefined : a.approvalRequestId)}>
+                        {isOpen ? 'Hide details' : 'See every detail'}
+                      </button>
+                      {access.canApprove ? (
+                        <>
+                          <button className="btn primary" disabled={busy === a.approvalRequestId} onClick={() => decide(a, true)}>Approve</button>
+                          <button className="btn danger" disabled={busy === a.approvalRequestId} onClick={() => decide(a, false)}>Decline</button>
+                        </>
+                      ) : (
+                        <span className="muted small">Waiting for an approver</span>
+                      )}
+                    </div>
+                  </div>
+                  {isOpen && <ApprovalDetails a={a} />}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         ) : <EmptyState title="You’re all caught up" hint="Nothing is waiting for your sign-off." />)}
       </section>
