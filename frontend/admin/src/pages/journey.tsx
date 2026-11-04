@@ -327,6 +327,8 @@ interface Approval {
   initiatingUserId?: string; approverRole?: string
   status: string; payloadHash: string
   requestedAtUtc: string; expiresAtUtc?: string
+  /** When a rule needs several approvers: how many, and who has approved so far. */
+  requiredApprovals?: number; approvedBy?: string[]
 }
 
 function show(v: unknown): string {
@@ -385,10 +387,13 @@ export function ThingsNeedingYou({ focus }: { focus?: string }) {
     setBusy(a.approvalRequestId)
     try {
       // Tie the decision to what was on screen: if the details changed since, the gateway refuses it.
-      await api(`/api/approvals/${a.approvalRequestId}/${ok ? 'approve' : 'reject'}`, {
+      const res = await api<{ outcome?: string; message?: string }>(`/api/approvals/${a.approvalRequestId}/${ok ? 'approve' : 'reject'}`, {
         method: 'POST', body: JSON.stringify({ expectedPayloadHash: a.payloadHash }),
       })
-      toast.success(ok ? 'Approved' : 'Rejected', `The request has been ${ok ? 'approved' : 'rejected'}.`)
+      // Show what the gateway says happened (e.g. an approval that still needs another approver).
+      const done = res.outcome === 'Executed' || res.outcome === 'Rejected' || !res.outcome
+      toast.success(done ? (ok ? 'Approved' : 'Rejected') : 'Approval recorded',
+        res.message ?? `The request has been ${ok ? 'approved' : 'rejected'}.`)
       list.reload()
     } catch (e) {
       const err = e instanceof ApiError ? e : undefined
@@ -429,6 +434,12 @@ export function ThingsNeedingYou({ focus }: { focus?: string }) {
                       {a.amount != null && <> — <b>{a.amount} {a.currency ?? ''}</b></>}
                       {a.customerId && <span className="muted"> for {a.customerId}</span>}
                       <div className="muted small">{a.reason || ''} · asked {timeAgo(a.requestedAtUtc)}</div>
+                      {(a.requiredApprovals ?? 1) > 1 && (
+                        <div className="muted small">
+                          Needs {a.requiredApprovals} different approvers · {a.approvedBy?.length
+                            ? `approved so far by ${a.approvedBy.join(', ')}` : 'no approvals yet'}
+                        </div>
+                      )}
                     </div>
                     <div className="row" style={{ margin: 0, marginLeft: 'auto', gap: 8, alignItems: 'center' }}>
                       <button className="btn ghost small" aria-expanded={isOpen}
