@@ -9,8 +9,9 @@ using Microsoft.AspNetCore.Mvc;
 namespace AgentPermit.Gateway.Controllers;
 
 /// <summary>
-/// Read-only policy surface: inspect the active published snapshot and simulate a request's
-/// decision. Simulation never executes, persists, or mutates anything.
+/// Policy surface: inspect the active published snapshot, simulate a request's decision (never executes,
+/// persists or mutates anything), and publish rules — directly, or, with Policy:RequireSecondApprover, as a
+/// proposed change that a second administrator approves before it goes live.
 /// </summary>
 [ApiController]
 [Route("api/policies")]
@@ -22,6 +23,8 @@ public sealed class PoliciesController(
     IPolicySnapshotStore snapshotStore,
     AdminAuthorizationService admin,
     AuditService audit,
+    PolicyChangeService changes,
+    AccessDirectoryService directory,
     ILogger<PoliciesController> logger) : ControllerBase
 {
     [HttpGet("active")]
@@ -42,10 +45,13 @@ public sealed class PoliciesController(
             effectiveTo = s.EffectiveTo,
             defaultDecision = s.DefaultDecision,
             ruleCount = s.Rules.Count,
+            requireSecondApprover = changes.Required,
+            // Every field a rule can carry, so the console can edit a rule without dropping the parts it doesn't
+            // show (a windowed limit, the number of approvers, the reason text).
             rules = s.Rules.OrderBy(r => r.Priority).Select(r => new
             {
-                r.Id, r.Name, r.Priority, r.ActionId, r.Decision, r.ApproverRoles, r.Description,
-                conditions = r.Conditions.Select(c => new { c.Field, c.Operator, value = c.Value })
+                r.Id, r.Name, r.Priority, r.ActionId, r.Decision, r.ApproverRoles, r.RequiredApprovals, r.Description, r.Reason,
+                conditions = r.Conditions.Select(c => new { c.Field, c.Operator, value = c.Value, c.Aggregate })
             })
         });
     }
@@ -63,6 +69,31 @@ public sealed class PoliciesController(
             return Problem(title: "Admin authorization required to publish policy",
                 statusCode: StatusCodes.Status403Forbidden);
         }
+
+        // Two-person rule: record the change for a second administrator instead of making it live now.
+        if (changes.Required)
+        {
+            try
+            {
+                var change = await changes.ProposeAsync(authored, Actor(), ct);
+                await audit.WriteAsync(HttpContext, "policy.propose", "Policy", change.Version,
+                    $"Proposed {change.PolicyCode} v{change.Version} ({change.RuleCount} rules) for a second administrator's approval (change {change.ChangeId})");
+                return Accepted(new
+                {
+                    status = "PendingApproval",
+                    changeId = change.ChangeId,
+                    policyCode = change.PolicyCode,
+                    version = change.Version,
+                    message = "Saved for approval. A different administrator must approve these rules before they go live."
+                });
+            }
+            catch (PolicyValidationException ex)
+            {
+                logger.LogWarning("Policy proposal rejected: {Message}", ex.Message);
+                throw new ValidationException(ex.Message) { Title = "Invalid policy" };
+            }
+        }
+
         try
         {
             var publisherId = Request.Headers["X-Agent-Client-Id"].ToString();
@@ -80,6 +111,68 @@ public sealed class PoliciesController(
 
     [HttpGet("versions")]
     public IActionResult Versions() => Ok(new { versions = snapshotStore.ListVersions() });
+
+    /// <summary>Proposed rule changes (newest first) and whether a second administrator is required.</summary>
+    [HttpGet("changes")]
+    public async Task<IActionResult> Changes(CancellationToken ct)
+    {
+        if (!await admin.IsMemberAsync(HttpContext, ct))
+            return Problem(title: "Workspace access required", statusCode: StatusCodes.Status403Forbidden);
+        return Ok(new { requireSecondApprover = changes.Required, changes = await changes.ListAsync(ct) });
+    }
+
+    [HttpGet("changes/{changeId}")]
+    public async Task<IActionResult> Change(string changeId, CancellationToken ct)
+    {
+        if (!await admin.IsMemberAsync(HttpContext, ct))
+            return Problem(title: "Workspace access required", statusCode: StatusCodes.Status403Forbidden);
+        var change = await changes.GetAsync(changeId, ct)
+            ?? throw new NotFoundException("No proposed rule change exists with that id.") { Title = "Change not found" };
+        return Ok(change);
+    }
+
+    /// <summary>A second, signed-in administrator approves a proposed change: it is signed and published.</summary>
+    [HttpPost("changes/{changeId}/approve")]
+    public async Task<IActionResult> ApproveChange(string changeId, CancellationToken ct)
+    {
+        if (!admin.IsAuthorized(HttpContext))
+            return Problem(title: "Admin authorization required to approve rule changes", statusCode: StatusCodes.Status403Forbidden);
+        try
+        {
+            var (change, result) = await changes.ApproveAsync(changeId, Actor(), ct);
+            await audit.WriteAsync(HttpContext, "policy.publish", "Policy", result.Version,
+                $"Published {result.PolicyCode} v{result.Version} (signed={result.Signed}): proposed by {change.ProposedBy}, approved by {change.DecidedBy} (change {change.ChangeId})");
+            return Ok(new { change.ChangeId, change.Status, change.ProposedBy, approvedBy = change.DecidedBy, result });
+        }
+        catch (PolicyValidationException ex)
+        {
+            throw new ValidationException(ex.Message) { Title = "Invalid policy" };
+        }
+    }
+
+    /// <summary>Turn a proposed change down (any administrator, including the proposer).</summary>
+    [HttpPost("changes/{changeId}/reject")]
+    public async Task<IActionResult> RejectChange(string changeId, [FromBody] PolicyChangeDecisionDto? body, CancellationToken ct)
+    {
+        if (!admin.IsAuthorized(HttpContext))
+            return Problem(title: "Admin authorization required to reject rule changes", statusCode: StatusCodes.Status403Forbidden);
+        var change = await changes.RejectAsync(changeId, Actor(), body?.Comment, ct);
+        await audit.WriteAsync(HttpContext, "policy.change.reject", "Policy", change.Version,
+            $"Rejected proposed {change.PolicyCode} v{change.Version} (change {change.ChangeId}) — {change.Comment ?? "no comment"}");
+        return Ok(new { change.ChangeId, change.Status, rejectedBy = change.DecidedBy });
+    }
+
+    /// <summary>
+    /// Who is acting. A person is someone signed in with Entra ID; the shared admin key and dev-open mode are not
+    /// people, so they can propose and reject changes but never approve one.
+    /// </summary>
+    private PolicyChangeActor Actor()
+    {
+        var (name, email) = directory.Describe(HttpContext);
+        var isPerson = !directory.DevOpen && !directory.IsServiceCaller(HttpContext)
+                       && HttpContext.User?.Identity?.IsAuthenticated == true;
+        return new PolicyChangeActor(name, string.IsNullOrWhiteSpace(email) ? null : email, isPerson);
+    }
 
     [HttpPost("simulate")]
     [ProducesResponseType(typeof(SimulationResultDto), StatusCodes.Status200OK)]
@@ -119,6 +212,11 @@ public sealed class PoliciesController(
             EvaluatedAtUtc = DateTimeOffset.UtcNow
         });
     }
+}
+
+public sealed class PolicyChangeDecisionDto
+{
+    [JsonPropertyName("comment")] public string? Comment { get; set; }
 }
 
 public sealed class SimulationRequestDto

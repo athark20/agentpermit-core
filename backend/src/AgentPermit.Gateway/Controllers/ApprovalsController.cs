@@ -95,8 +95,11 @@ public sealed class ApprovalsController(
     private IActionResult MapOutcome(ApprovalDecisionResponseDto result) => result.Outcome switch
     {
         ApprovalOutcome.Executed or ApprovalOutcome.Rejected => Ok(result),
+        // Counted, but more approvers are needed: accepted, nothing has run yet.
+        ApprovalOutcome.ApprovalRecorded => StatusCode(StatusCodes.Status202Accepted, result),
         ApprovalOutcome.NotFound => StatusCode(StatusCodes.Status404NotFound, result),
         ApprovalOutcome.AlreadyDecided or ApprovalOutcome.Expired or ApprovalOutcome.PayloadChanged
+            or ApprovalOutcome.AlreadyApprovedByYou
             => StatusCode(StatusCodes.Status409Conflict, result),
         ApprovalOutcome.ApproverRoleRequired or ApprovalOutcome.SeparationOfDuties
             => StatusCode(StatusCodes.Status403Forbidden, result),

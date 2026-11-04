@@ -136,6 +136,31 @@ public sealed class ApprovalRequestRecord
     public DateTimeOffset? ExpiresUtc { get; set; }
     public DateTimeOffset? RespondedUtc { get; set; }
     public string? ResponseComment { get; set; }
+
+    /// <summary>How many different people must approve before the action runs (1 = a single approver).</summary>
+    public int RequiredApprovals { get; set; } = 1;
+}
+
+/// <summary>
+/// One person's decision on an approval that needs several approvers (dbo.ApprovalDecision). The store keeps at
+/// most one per person per approval, so nobody can count twice.
+/// </summary>
+public sealed class ApprovalDecisionRecord
+{
+    public Guid ApprovalDecisionId { get; set; }
+    public Guid ApprovalRequestId { get; set; }
+
+    /// <summary>The approver as recorded, e.g. "Fatima Hassan &lt;fatima@bank.ae&gt;".</summary>
+    public string ApproverId { get; set; } = string.Empty;
+
+    /// <summary>Normalised identity (lower-case e-mail when there is one) that makes "one decision per person" checkable.</summary>
+    public string ApproverKey { get; set; } = string.Empty;
+
+    /// <summary>Approved | Rejected.</summary>
+    public string Decision { get; set; } = string.Empty;
+
+    public string? Comment { get; set; }
+    public DateTimeOffset DecidedUtc { get; set; }
 }
 
 /// <summary>Row in dbo.Execution — one attempt to run the action against a target.</summary>

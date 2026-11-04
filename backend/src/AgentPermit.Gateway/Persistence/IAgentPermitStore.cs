@@ -51,6 +51,15 @@ public interface IAgentPermitStore
 
     Task UpdateApprovalAsync(ApprovalRequestRecord record, CancellationToken ct);
 
+    /// <summary>
+    /// Record one person's decision on a multi-approver approval. Returns false, recording nothing, when that
+    /// person (same <see cref="ApprovalDecisionRecord.ApproverKey"/>) has already decided this approval.
+    /// </summary>
+    Task<bool> TryInsertApprovalDecisionAsync(ApprovalDecisionRecord record, CancellationToken ct);
+
+    /// <summary>Every decision recorded for an approval, oldest first.</summary>
+    Task<IReadOnlyList<ApprovalDecisionRecord>> GetApprovalDecisionsAsync(Guid approvalRequestId, CancellationToken ct);
+
     /// <summary>Succeeded execution for a request, if any (duplicate-execution guard).</summary>
     Task<ExecutionRecord?> FindSucceededExecutionAsync(Guid actionRequestId, CancellationToken ct);
 

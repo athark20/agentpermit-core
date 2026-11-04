@@ -181,6 +181,10 @@ builder.Services.AddSingleton<IPublishablePolicySnapshotProvider>(sp => new Publ
     sp.GetRequiredService<ILogger<PublishablePolicySnapshotProvider>>()));
 builder.Services.AddSingleton<IPolicySnapshotProvider>(sp => sp.GetRequiredService<IPublishablePolicySnapshotProvider>());
 builder.Services.AddSingleton<IPolicyPublisher, PolicyPublisher>();
+// Two-person control for rule changes (Policy:RequireSecondApprover): a publish becomes a proposal that a
+// different signed-in administrator approves before it goes live. The freeze switch stays one-person.
+builder.Services.AddSingleton(builder.Configuration.GetSection("Policy").Get<PolicyChangeOptions>() ?? new PolicyChangeOptions());
+builder.Services.AddSingleton<PolicyChangeService>();
 builder.Services.AddSingleton<IPolicyEngine, ConfigurablePolicyEngine>();
 // Computes the windowed aggregates (sum/count/distinct/max over a look-back) that limit rules reference,
 // before the synchronous engine runs. No aggregate rules in the snapshot => no store call per request.

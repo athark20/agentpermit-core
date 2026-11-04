@@ -375,11 +375,15 @@ public sealed class ActionRequestService(
         ActionRequestRecord request, PolicyEvaluationResult result, EffectiveDecision effective,
         Guid correlationId, CancellationToken ct)
     {
+        // A rule may require several different people to approve (two-person control for large payments,
+        // bank-detail changes and the like); the approval records how many.
+        var requiredApprovals = Math.Max(1, result.RequiredApprovals);
         var approval = new ApprovalRequestRecord
         {
             ApprovalRequestId = Guid.NewGuid(),
             ActionRequestId = request.ActionRequestId,
-            ApprovalType = "SingleApprover",
+            ApprovalType = requiredApprovals > 1 ? "MultiApprover" : "SingleApprover",
+            RequiredApprovals = requiredApprovals,
             ApproverRole = result.RequiredApproverRoles.FirstOrDefault(),
             PayloadHash = request.RequestPayloadHash,
             Status = ApprovalStatus.Pending,

@@ -30,6 +30,9 @@ public sealed class PolicyEvaluationResult
     public required string Reason { get; init; }
     public string? MatchedRuleId { get; init; }
     public string[] RequiredApproverRoles { get; init; } = Array.Empty<string>();
+
+    /// <summary>For REQUIRE_APPROVAL: how many different people must approve (the matched rule's requiredApprovals, default 1).</summary>
+    public int RequiredApprovals { get; init; } = 1;
     public required string TraceJson { get; init; }
 }
 

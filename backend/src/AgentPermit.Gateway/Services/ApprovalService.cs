@@ -89,7 +89,7 @@ public sealed class ApprovalService(
         foreach (var a in pending)
         {
             var request = await store.GetActionRequestAsync(a.ActionRequestId, ct);
-            if (request is not null) list.Add(ToSummary(a, request));
+            if (request is not null) list.Add(ToSummary(a, request, await ApprovedByAsync(a, ct)));
         }
         return list;
     }
@@ -99,7 +99,7 @@ public sealed class ApprovalService(
         var approval = await store.GetApprovalAsync(approvalRequestId, ct);
         if (approval is null) return null;
         var request = await store.GetActionRequestAsync(approval.ActionRequestId, ct);
-        return request is null ? null : ToSummary(approval, request);
+        return request is null ? null : ToSummary(approval, request, await ApprovedByAsync(approval, ct));
     }
 
     public async Task<ApprovalDecisionResponseDto> ApproveAsync(
@@ -126,9 +126,19 @@ public sealed class ApprovalService(
                 "The request payload has changed since approval was requested; execution refused.");
         }
 
+        // Several approvers required (two-person control): record this person's approval, and go on to execute
+        // only once enough DIFFERENT people have approved. The store keeps one decision per person.
+        var approvedBy = body.ApproverId;
+        if (approval.RequiredApprovals > 1)
+        {
+            var (pendingResponse, approvers) = await RecordApprovalAsync(approval, body, ct);
+            if (pendingResponse is not null) return pendingResponse;
+            approvedBy = string.Join("; ", approvers);
+        }
+
         // Record the approval decision and move the request to APPROVED.
         approval.Status = ApprovalStatus.Approved;
-        approval.ApproverId = body.ApproverId;
+        approval.ApproverId = approvedBy;
         approval.RespondedUtc = DateTimeOffset.UtcNow;
         approval.ResponseComment = body.Comment;
         await store.UpdateApprovalAsync(approval, ct);
@@ -161,7 +171,12 @@ public sealed class ApprovalService(
         var decider = await AuthorizeDeciderAsync(approval!, request!, body.ApproverId, isApprove: false, ct);
         if (decider is not null) return decider;
 
-        approval!.Status = ApprovalStatus.Rejected;
+        // With several approvers required, one "no" from any eligible approver stops the action. Keep that
+        // decision alongside the approvals already given (best effort: a repeat by the same person isn't stored).
+        if (approval!.RequiredApprovals > 1 && ApproverGroupDirectory.ExtractEmail(body.ApproverId) is { } rejecterKey)
+            await store.TryInsertApprovalDecisionAsync(NewDecision(approval, body, rejecterKey, ApprovalStatus.Rejected), ct);
+
+        approval.Status = ApprovalStatus.Rejected;
         approval.ApproverId = body.ApproverId;
         approval.RespondedUtc = DateTimeOffset.UtcNow;
         approval.ResponseComment = body.Comment;
@@ -204,7 +219,73 @@ public sealed class ApprovalService(
         return (approval, request, null);
     }
 
-    private static ApprovalSummaryDto ToSummary(ApprovalRequestRecord a, ActionRequestRecord r)
+    /// <summary>
+    /// Multi-approver approvals: record one person's approval. Returns the response to send back when the action
+    /// must not run yet (more approvers needed, or this person had already approved), otherwise every approver.
+    /// </summary>
+    private async Task<(ApprovalDecisionResponseDto? PendingResponse, IReadOnlyList<string> Approvers)> RecordApprovalAsync(
+        ApprovalRequestRecord approval, ApprovalDecisionRequestDto body, CancellationToken ct)
+    {
+        var key = ApproverGroupDirectory.ExtractEmail(body.ApproverId);
+        if (key is null)
+            return (Result(approval, ApprovalOutcome.ApproverRoleRequired, approval.Status,
+                "This request needs approval from several different people, so each approval must come from an identified person."),
+                Array.Empty<string>());
+
+        var counted = await store.TryInsertApprovalDecisionAsync(NewDecision(approval, body, key, ApprovalStatus.Approved), ct);
+
+        var approvers = (await store.GetApprovalDecisionsAsync(approval.ApprovalRequestId, ct))
+            .Where(d => d.Decision == ApprovalStatus.Approved)
+            .GroupBy(d => d.ApproverKey, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First().ApproverId)
+            .ToList();
+        var remaining = approval.RequiredApprovals - approvers.Count;
+        if (remaining <= 0) return (null, approvers);   // enough people: go on and execute (dup-guarded)
+
+        var more = remaining == 1 ? "1 more approver" : $"{remaining} more approvers";
+        if (!counted)
+            return (Tally(approval, ApprovalOutcome.AlreadyApprovedByYou, approvers.Count,
+                $"You have already approved this request. It needs {more}, other than you, before it runs."), approvers);
+
+        logger.LogInformation("Approval {ApprovalId}: {Count} of {Required} approvals recorded; waiting for {Remaining} more.",
+            approval.ApprovalRequestId, approvers.Count, approval.RequiredApprovals, remaining);
+        return (Tally(approval, ApprovalOutcome.ApprovalRecorded, approvers.Count,
+            $"Your approval is recorded ({approvers.Count} of {approval.RequiredApprovals}). It needs {more} before it runs."), approvers);
+    }
+
+    private static ApprovalDecisionRecord NewDecision(
+        ApprovalRequestRecord approval, ApprovalDecisionRequestDto body, string approverKey, string decision) => new()
+    {
+        ApprovalDecisionId = Guid.NewGuid(),
+        ApprovalRequestId = approval.ApprovalRequestId,
+        ApproverId = Clip(body.ApproverId?.Trim() ?? approverKey, 400)!,
+        ApproverKey = Clip(approverKey, 320)!,
+        Decision = decision,
+        Comment = Clip(body.Comment, 2000),
+        DecidedUtc = DateTimeOffset.UtcNow
+    };
+
+    /// <summary>Who has approved so far (only multi-approver approvals keep per-person decisions).</summary>
+    private async Task<string[]> ApprovedByAsync(ApprovalRequestRecord approval, CancellationToken ct)
+    {
+        if (approval.RequiredApprovals <= 1) return Array.Empty<string>();
+        return (await store.GetApprovalDecisionsAsync(approval.ApprovalRequestId, ct))
+            .Where(d => d.Decision == ApprovalStatus.Approved)
+            .Select(d => d.ApproverId)
+            .ToArray();
+    }
+
+    private static ApprovalDecisionResponseDto Tally(ApprovalRequestRecord approval, string outcome, int received, string message)
+    {
+        var response = Result(approval, outcome, approval.Status, message);
+        response.ApprovalsReceived = received;
+        response.ApprovalsRequired = approval.RequiredApprovals;
+        return response;
+    }
+
+    private static string? Clip(string? s, int max) => s is null || s.Length <= max ? s : s[..max];
+
+    private static ApprovalSummaryDto ToSummary(ApprovalRequestRecord a, ActionRequestRecord r, string[] approvedBy)
     {
         var p = ParsePayload(r);
         return new ApprovalSummaryDto
@@ -223,7 +304,9 @@ public sealed class ApprovalService(
             ApproverRole = a.ApproverRole,
             PayloadHash = a.PayloadHash,
             RequestedAtUtc = a.RequestedUtc,
-            ExpiresAtUtc = a.ExpiresUtc
+            ExpiresAtUtc = a.ExpiresUtc,
+            RequiredApprovals = a.RequiredApprovals,
+            ApprovedBy = approvedBy
         };
     }
 

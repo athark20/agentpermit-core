@@ -55,6 +55,14 @@ public sealed class ApprovalSummaryDto
 
     [JsonPropertyName("expiresAtUtc")]
     public DateTimeOffset? ExpiresAtUtc { get; set; }
+
+    /// <summary>How many different people must approve before the action runs (1 = a single approver).</summary>
+    [JsonPropertyName("requiredApprovals")]
+    public int RequiredApprovals { get; set; } = 1;
+
+    /// <summary>Who has approved so far, when several approvers are required.</summary>
+    [JsonPropertyName("approvedBy")]
+    public string[] ApprovedBy { get; set; } = Array.Empty<string>();
 }
 
 /// <summary>Body for approve/reject.</summary>
@@ -96,6 +104,16 @@ public sealed class ApprovalDecisionResponseDto
     /// <summary>Present when the approval led to a successful execution.</summary>
     [JsonPropertyName("receipt")]
     public ReceiptDto? Receipt { get; set; }
+
+    /// <summary>When several approvers are required: how many different people have approved so far.</summary>
+    [JsonPropertyName("approvalsReceived")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ApprovalsReceived { get; set; }
+
+    /// <summary>When several approvers are required: how many are needed in total.</summary>
+    [JsonPropertyName("approvalsRequired")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ApprovalsRequired { get; set; }
 }
 
 /// <summary>Outcome codes for an approval decision.</summary>
@@ -114,4 +132,10 @@ public static class ApprovalOutcome
 
     /// <summary>The approver is the person who initiated the request or owns the agent — four-eyes violated.</summary>
     public const string SeparationOfDuties = "SeparationOfDuties";
+
+    /// <summary>Several approvers are required: this approval counted, and more are still needed. Nothing ran yet.</summary>
+    public const string ApprovalRecorded = "ApprovalRecorded";
+
+    /// <summary>Several approvers are required and this person has already approved; the same person can't count twice.</summary>
+    public const string AlreadyApprovedByYou = "AlreadyApprovedByYou";
 }

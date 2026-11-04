@@ -199,17 +199,17 @@ public sealed class SqlAgentPermitStore(string connectionString) : IAgentPermitS
             """
             INSERT INTO dbo.ApprovalRequest
               (ApprovalRequestId, ActionRequestId, ApprovalType, ApproverId, ApproverRole, PayloadHash,
-               Status, RequestedUtc, ExpiresUtc, RespondedUtc, ResponseComment)
+               Status, RequestedUtc, ExpiresUtc, RespondedUtc, ResponseComment, RequiredApprovals)
             VALUES
               (@ApprovalRequestId, @ActionRequestId, @ApprovalType, @ApproverId, @ApproverRole, @PayloadHash,
-               @Status, @RequestedUtc, @ExpiresUtc, @RespondedUtc, @ResponseComment);
+               @Status, @RequestedUtc, @ExpiresUtc, @RespondedUtc, @ResponseComment, @RequiredApprovals);
             """,
             new
             {
                 r.ApprovalRequestId, r.ActionRequestId, r.ApprovalType, r.ApproverId, r.ApproverRole,
                 r.PayloadHash, r.Status, RequestedUtc = r.RequestedUtc.UtcDateTime,
                 ExpiresUtc = r.ExpiresUtc?.UtcDateTime, RespondedUtc = r.RespondedUtc?.UtcDateTime,
-                r.ResponseComment
+                r.ResponseComment, r.RequiredApprovals
             });
     }
 
@@ -244,6 +244,41 @@ public sealed class SqlAgentPermitStore(string connectionString) : IAgentPermitS
                 r.ApprovalRequestId, r.Status, r.ApproverId, r.ApproverRole,
                 RespondedUtc = r.RespondedUtc?.UtcDateTime, r.ResponseComment
             });
+    }
+
+    public async Task<bool> TryInsertApprovalDecisionAsync(ApprovalDecisionRecord r, CancellationToken ct)
+    {
+        await using var c = Open();
+        try
+        {
+            await c.ExecuteAsync(
+                """
+                INSERT INTO dbo.ApprovalDecision
+                  (ApprovalDecisionId, ApprovalRequestId, ApproverId, ApproverKey, Decision, Comment, DecidedUtc)
+                VALUES
+                  (@ApprovalDecisionId, @ApprovalRequestId, @ApproverId, @ApproverKey, @Decision, @Comment, @DecidedUtc);
+                """,
+                new
+                {
+                    r.ApprovalDecisionId, r.ApprovalRequestId, r.ApproverId, r.ApproverKey, r.Decision, r.Comment,
+                    DecidedUtc = r.DecidedUtc.UtcDateTime
+                });
+            return true;
+        }
+        catch (SqlException ex) when (ex.Errors.Cast<SqlError>().Any(e => e.Number is 2601 or 2627))
+        {
+            // UX_ApprovalDecision_Approver: this person has already decided this approval.
+            return false;
+        }
+    }
+
+    public async Task<IReadOnlyList<ApprovalDecisionRecord>> GetApprovalDecisionsAsync(Guid approvalRequestId, CancellationToken ct)
+    {
+        await using var c = Open();
+        var rows = await c.QueryAsync<Row.ApprovalDecision>(
+            "SELECT * FROM dbo.ApprovalDecision WHERE ApprovalRequestId = @id ORDER BY DecidedUtc ASC",
+            new { id = approvalRequestId });
+        return rows.Select(r => r.Map()).ToList();
     }
 
     public async Task<PolicyDecisionRecord?> GetLatestPolicyDecisionAsync(Guid actionRequestId, CancellationToken ct)
@@ -420,6 +455,8 @@ public sealed class SqlAgentPermitStore(string connectionString) : IAgentPermitS
             public DateTime? ExpiresUtc { get; set; }
             public DateTime? RespondedUtc { get; set; }
             public string? ResponseComment { get; set; }
+            // Absent before the 2026-11 approval-quorum migration; Dapper then leaves the default.
+            public int RequiredApprovals { get; set; } = 1;
 
             public ApprovalRequestRecord Map() => new()
             {
@@ -428,7 +465,25 @@ public sealed class SqlAgentPermitStore(string connectionString) : IAgentPermitS
                 RequestedUtc = Utc(RequestedUtc),
                 ExpiresUtc = ExpiresUtc is null ? null : Utc(ExpiresUtc.Value),
                 RespondedUtc = RespondedUtc is null ? null : Utc(RespondedUtc.Value),
-                ResponseComment = ResponseComment
+                ResponseComment = ResponseComment,
+                RequiredApprovals = RequiredApprovals < 1 ? 1 : RequiredApprovals
+            };
+        }
+
+        public sealed class ApprovalDecision
+        {
+            public Guid ApprovalDecisionId { get; set; }
+            public Guid ApprovalRequestId { get; set; }
+            public string ApproverId { get; set; } = "";
+            public string ApproverKey { get; set; } = "";
+            public string Decision { get; set; } = "";
+            public string? Comment { get; set; }
+            public DateTime DecidedUtc { get; set; }
+
+            public ApprovalDecisionRecord Map() => new()
+            {
+                ApprovalDecisionId = ApprovalDecisionId, ApprovalRequestId = ApprovalRequestId, ApproverId = ApproverId,
+                ApproverKey = ApproverKey, Decision = Decision, Comment = Comment, DecidedUtc = Utc(DecidedUtc)
             };
         }
 
