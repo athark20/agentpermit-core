@@ -61,12 +61,14 @@ public sealed class ConfigurablePolicyEngine(IPolicySnapshotProvider snapshots) 
         Reason = rule.Reason ?? $"Matched rule '{rule.Name}' ({rule.Id}).",
         MatchedRuleId = rule.Id,
         RequiredApproverRoles = rule.ApproverRoles,
+        RequiredApprovals = rule.RequiredApprovals is > 1 ? rule.RequiredApprovals.Value : 1,
         TraceJson = JsonSerializer.Serialize(new
         {
             matchedRuleId = rule.Id,
             ruleName = rule.Name,
             priority = rule.Priority,
             decision = rule.Decision,
+            requiredApprovals = rule.RequiredApprovals,
             snapshotVersion = version,
             // The windowed values the decision rested on — the approver / auditor can see WHY (e.g. sum = 1,200).
             aggregates = ctx.Aggregates is { Count: > 0 } ? ctx.Aggregates : null

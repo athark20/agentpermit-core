@@ -677,3 +677,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   .page-title { font-size: 18px; }
   .signin-brand .brand-name { font-size: 30px; }
 }
+
+/* rule changes waiting for a second administrator */
+.pending-changes { margin-bottom: 18px; border-left: 3px solid var(--amber); }
+.cond-note { margin: 4px 0 0; }

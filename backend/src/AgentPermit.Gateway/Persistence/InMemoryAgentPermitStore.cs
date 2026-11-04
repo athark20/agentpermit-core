@@ -12,6 +12,8 @@ public sealed class InMemoryAgentPermitStore : IAgentPermitStore
     private readonly ConcurrentDictionary<string, Guid> _idempotency = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<Guid, PolicyDecisionRecord> _decisions = new();
     private readonly ConcurrentDictionary<Guid, ApprovalRequestRecord> _approvals = new();
+    // One decision per (approval, person): TryAdd is the in-memory equivalent of the SQL unique index.
+    private readonly ConcurrentDictionary<(Guid ApprovalRequestId, string ApproverKey), ApprovalDecisionRecord> _approvalDecisions = new();
     private readonly ConcurrentDictionary<Guid, ExecutionRecord> _executions = new();
     private readonly ConcurrentDictionary<Guid, ActionReceiptRecord> _receipts = new();
     private readonly object _chainLock = new();
@@ -163,6 +165,18 @@ public sealed class InMemoryAgentPermitStore : IAgentPermitStore
     {
         _approvals[record.ApprovalRequestId] = record;
         return Task.CompletedTask;
+    }
+
+    public Task<bool> TryInsertApprovalDecisionAsync(ApprovalDecisionRecord record, CancellationToken ct)
+        => Task.FromResult(_approvalDecisions.TryAdd((record.ApprovalRequestId, record.ApproverKey), record));
+
+    public Task<IReadOnlyList<ApprovalDecisionRecord>> GetApprovalDecisionsAsync(Guid approvalRequestId, CancellationToken ct)
+    {
+        IReadOnlyList<ApprovalDecisionRecord> decisions = _approvalDecisions.Values
+            .Where(d => d.ApprovalRequestId == approvalRequestId)
+            .OrderBy(d => d.DecidedUtc)
+            .ToList();
+        return Task.FromResult(decisions);
     }
 
     public Task<ExecutionRecord?> FindSucceededExecutionAsync(Guid actionRequestId, CancellationToken ct)

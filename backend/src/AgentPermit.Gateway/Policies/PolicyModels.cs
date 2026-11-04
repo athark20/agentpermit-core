@@ -107,6 +107,15 @@ public sealed class PolicyRule
     public string[] ApproverRoles { get; set; } = Array.Empty<string>();
 
     /// <summary>
+    /// REQUIRE_APPROVAL only: how many DIFFERENT people must approve before the action runs (1–5). Each one must
+    /// be eligible on their own (approver group, separation of duties), and a single rejection stops the action.
+    /// Omitted when null (one approver) so snapshots signed before this field existed still hash identically.
+    /// </summary>
+    [JsonPropertyName("requiredApprovals")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? RequiredApprovals { get; set; }
+
+    /// <summary>
     /// Human description of the rule (author aid; not used by the engine). Omitted when null so that
     /// snapshots signed before this field existed still hash identically and verify.
     /// </summary>

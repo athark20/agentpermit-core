@@ -155,7 +155,11 @@ public sealed class PolicyPublisher(
         };
     }
 
-    private static void Validate(PolicySnapshot s)
+    /// <summary>Most approvers a single rule may require.</summary>
+    public const int MaxRequiredApprovals = 5;
+
+    /// <summary>Checks an authored snapshot. Public so a proposed rule change is checked when proposed, not when approved.</summary>
+    public static void Validate(PolicySnapshot s)
     {
         if (string.IsNullOrWhiteSpace(s.PolicyCode)) throw new PolicyValidationException("policyCode is required.");
         if (string.IsNullOrWhiteSpace(s.Version)) throw new PolicyValidationException("version is required.");
@@ -168,6 +172,13 @@ public sealed class PolicyPublisher(
             if (string.IsNullOrWhiteSpace(r.Id)) throw new PolicyValidationException("every rule needs an id.");
             if (!ValidDecisions.Contains(r.Decision))
                 throw new PolicyValidationException($"rule '{r.Id}': invalid decision '{r.Decision}'.");
+            if (r.RequiredApprovals is { } required)
+            {
+                if (!string.Equals(r.Decision, "REQUIRE_APPROVAL", StringComparison.Ordinal))
+                    throw new PolicyValidationException($"rule '{r.Id}': requiredApprovals only applies to REQUIRE_APPROVAL rules.");
+                if (required < 1 || required > MaxRequiredApprovals)
+                    throw new PolicyValidationException($"rule '{r.Id}': requiredApprovals must be between 1 and {MaxRequiredApprovals}.");
+            }
             foreach (var c in r.Conditions)
             {
                 if (!ValidOperators.Contains(c.Operator))
