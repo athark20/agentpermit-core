@@ -250,6 +250,9 @@ if (string.Equals(provider, "SqlServer", StringComparison.OrdinalIgnoreCase))
     builder.Services.AddSingleton<IAuditStore>(new SqlAuditStore(connectionString));
     builder.Services.AddSingleton<IConfigStore>(new SqlConfigStore(connectionString));
     builder.Services.AddSingleton<IObservationStore>(new SqlObservationStore(connectionString));
+    // Limit locks shared by every replica (SQL application locks), so windowed limits are race-proof.
+    builder.Services.AddSingleton<IAggregateLock>(sp => new SqlAggregateLock(connectionString,
+        sp.GetRequiredService<AggregateLockOptions>(), sp.GetRequiredService<ILogger<SqlAggregateLock>>()));
 }
 else
 {
@@ -259,8 +262,10 @@ else
     builder.Services.AddSingleton<IAuditStore, InMemoryAuditStore>();
     builder.Services.AddSingleton<IConfigStore, InMemoryConfigStore>();
     builder.Services.AddSingleton<IObservationStore, InMemoryObservationStore>();
+    builder.Services.AddSingleton<IAggregateLock, InMemoryAggregateLock>();
 }
 builder.Services.AddSingleton<AuditService>();
+builder.Services.AddSingleton(builder.Configuration.GetSection("Limits").Get<AggregateLockOptions>() ?? new AggregateLockOptions());
 
 // --- Power Platform / Copilot Studio discovery (onboarding) ---
 var ppOptions = builder.Configuration.GetSection("PowerPlatform").Get<AgentPermit.Gateway.Services.PowerPlatform.PowerPlatformOptions>()
