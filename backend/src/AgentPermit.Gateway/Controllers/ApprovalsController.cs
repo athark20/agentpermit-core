@@ -6,17 +6,23 @@ using Microsoft.AspNetCore.Mvc;
 namespace AgentPermit.Gateway.Controllers;
 
 /// <summary>
-/// Approver-facing endpoints for REQUIRE_APPROVAL requests. Called by the console and by the approval
-/// workflow (Teams Adaptive Card via Power Automate), not by the Copilot agent. Persona-gated: any
-/// workspace member may view; only approvers/admins (or the service key path) may decide. The
-/// approver identity recorded on a decision is DERIVED from the authenticated caller — never trusted
-/// from the body — except on the service-key path where the Teams responder is passed through.
+/// Approver-facing endpoints for REQUIRE_APPROVAL requests. Called by the console and (to read) by the
+/// approval workflow that posts the Teams card, not by the Copilot agent. Persona-gated: any workspace
+/// member may view; only approvers/admins may decide. The approver recorded on a decision is the person
+/// AgentPermit authenticated — their own Microsoft Entra ID sign-in — never a name taken from the body.
+/// The shared admin key identifies a service, not a person: it may view approvals, but it can only decide
+/// one when <see cref="TeamsOptions.AllowWorkflowDecisions"/> is on (legacy), and the responder the
+/// workflow reports is then recorded as unverified.
 /// </summary>
 [ApiController]
 [Route("api/approvals")]
 public sealed class ApprovalsController(
-    ApprovalService approvals, AccessDirectoryService directory, AuditService audit, ILogger<ApprovalsController> logger) : ControllerBase
+    ApprovalService approvals, AccessDirectoryService directory, AuditService audit, TeamsOptions teams,
+    ILogger<ApprovalsController> logger) : ControllerBase
 {
+    private const string WorkflowReportedNote =
+        "The approver was reported by the approval workflow and was not verified by AgentPermit.";
+
     private async Task RequireMemberAsync(CancellationToken ct)
     {
         if (directory.DevOpen || directory.IsServiceCaller(HttpContext)) return;
@@ -26,15 +32,36 @@ public sealed class ApprovalsController(
             { Title = "No access yet" };
     }
 
-    private async Task<string> RequireApproverAsync(string? bodyApproverId, CancellationToken ct)
+    /// <summary>
+    /// Who is deciding, and whether AgentPermit verified it. Entra path: the signed-in person, who must hold
+    /// the Approver or Admin role (the body is ignored). Shared-key path: refused unless the legacy workflow
+    /// mode is on, in which case the responder the workflow reports is used and flagged as unverified.
+    /// </summary>
+    private async Task<(string ApproverId, bool ReportedByWorkflow)> RequireApproverAsync(
+        string? bodyApproverId, CancellationToken ct)
     {
-        if (directory.DevOpen || directory.IsServiceCaller(HttpContext))
-            return directory.ResolveApproverIdentity(HttpContext, bodyApproverId);
+        if (directory.DevOpen)
+            return (directory.ResolveApproverIdentity(HttpContext, bodyApproverId), false);
+
+        if (directory.IsServiceCaller(HttpContext))
+        {
+            if (!teams.AllowWorkflowDecisions)
+                throw new ForbiddenActionException(
+                    "Approvals must be made by a person signed in with their own work account. Open the request in AgentPermit to approve or decline it.")
+                { Title = "Sign in to decide" };
+
+            var reported = directory.ResolveApproverIdentity(HttpContext, bodyApproverId);
+            logger.LogWarning(
+                "Approval decision made with the shared admin key (Teams:AllowWorkflowDecisions is on). The approver '{Approver}' was reported by the workflow and is not verified.",
+                reported);
+            return (reported, true);
+        }
+
         var roles = await directory.RolesForAsync(HttpContext, ct);
         if (!roles.Contains("admin") && !roles.Contains("approver"))
             throw new ForbiddenActionException("Only people with the Approver role can approve or decline. Ask your administrator for the Approver role.")
             { Title = "Approver role needed" };
-        return directory.ResolveApproverIdentity(HttpContext, bodyApproverId);
+        return (directory.ResolveApproverIdentity(HttpContext, bodyApproverId), false);
     }
 
     [HttpGet("pending")]
@@ -64,12 +91,14 @@ public sealed class ApprovalsController(
         var dto = body ?? new ApprovalDecisionRequestDto();
         // Authorization (and identity binding) happens BEFORE the execution try/catch so a 403 is
         // never masked as a 502.
-        dto.ApproverId = await RequireApproverAsync(dto.ApproverId, ct);
+        var (approverId, reportedByWorkflow) = await RequireApproverAsync(dto.ApproverId, ct);
+        dto.ApproverId = approverId;
         try
         {
             var result = await approvals.ApproveAsync(approvalRequestId, dto, ct);
+            if (reportedByWorkflow) result.Message = $"{result.Message} {WorkflowReportedNote}";
             await audit.WriteAsync(HttpContext, "approval.approve", "Approval", approvalRequestId.ToString(),
-                $"Approved by {dto.ApproverId} — outcome {result.Outcome}");
+                $"Approved by {Describe(dto.ApproverId, reportedByWorkflow)} — outcome {result.Outcome}");
             return MapOutcome(result);
         }
         catch (Exception ex)
@@ -85,12 +114,19 @@ public sealed class ApprovalsController(
         Guid approvalRequestId, [FromBody] ApprovalDecisionRequestDto? body, CancellationToken ct)
     {
         var dto = body ?? new ApprovalDecisionRequestDto();
-        dto.ApproverId = await RequireApproverAsync(dto.ApproverId, ct);
+        var (approverId, reportedByWorkflow) = await RequireApproverAsync(dto.ApproverId, ct);
+        dto.ApproverId = approverId;
         var result = await approvals.RejectAsync(approvalRequestId, dto, ct);
+        if (reportedByWorkflow) result.Message = $"{result.Message} {WorkflowReportedNote}";
         await audit.WriteAsync(HttpContext, "approval.reject", "Approval", approvalRequestId.ToString(),
-            $"Rejected by {dto.ApproverId} — outcome {result.Outcome}");
+            $"Rejected by {Describe(dto.ApproverId, reportedByWorkflow)} — outcome {result.Outcome}");
         return MapOutcome(result);
     }
+
+    private static string Describe(string? approverId, bool reportedByWorkflow)
+        => reportedByWorkflow
+            ? $"{approverId} (reported by the approval workflow with the shared key; not verified)"
+            : approverId ?? "unknown";
 
     private IActionResult MapOutcome(ApprovalDecisionResponseDto result) => result.Outcome switch
     {
