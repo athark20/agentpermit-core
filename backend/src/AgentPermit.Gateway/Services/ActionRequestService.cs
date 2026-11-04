@@ -46,6 +46,7 @@ public sealed class ActionRequestService(
     ITeamsNotifier teams,
     SecurityOptions security,
     ApprovalOptions approvalOptions,
+    IAggregateLock limitLocks,
     ILogger<ActionRequestService> logger)
 {
     /// <summary>
@@ -268,6 +269,14 @@ public sealed class ActionRequestService(
                 ReasonCode.InvalidParameters, string.Join("; ", paramErrors), ct, executingAgentId);
         }
 
+        // --- Reserve against windowed limits ---
+        // Hold the lock of every limit this request is checked against or counts towards, from before the totals
+        // are computed until the request is recorded below. A second request in the same group waits, then sees
+        // this one in its total, so two requests at the same moment can't both slip under a cap. No aggregate
+        // rules => no keys => no lock and no store call.
+        await using var reservation = await limitLocks.AcquireAsync(
+            aggregateProvider.ReservationKeys(action, dto.Parameters, executingAgentId, dto.RootAgentId, dto.InitiatingUserId), ct);
+
         // --- Compute any windowed aggregates this snapshot's rules reference for this action ---
         // Returns null (and makes no store call) when no rule uses one, so the engine keeps its "no
         // per-request DB call" property for snapshots that don't aggregate. Fails closed: a store error
@@ -321,6 +330,9 @@ public sealed class ActionRequestService(
             UpdatedUtc = DateTimeOffset.UtcNow
         };
         await store.InsertActionRequestAsync(request, ct);
+        // Recorded at a state the limits count (pending approval, about to execute) or as a denial: the amount is
+        // reserved, so release the limit locks before the slower steps (execution, notifications) run.
+        await reservation.DisposeAsync();
         await PersistDecisionAsync(request.ActionRequestId, computed, effective, ct);
         await RecordObservationAsync(request, action, computed, effective, ct);
 

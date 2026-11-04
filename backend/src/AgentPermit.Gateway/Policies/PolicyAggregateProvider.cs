@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
@@ -18,8 +19,11 @@ namespace AgentPermit.Gateway.Policies;
 /// distinct value), so "sum &gt; 5000" means "with this request, the window would exceed 5000".
 ///
 /// Failure mode is closed: a store error propagates and the request fails, rather than a rule silently
-/// evaluating against a missing value. Under true concurrency two requests can both see the same prior sum;
-/// the velocity breakers remain the hard backstop.
+/// evaluating against a missing value.
+///
+/// Concurrency: <see cref="ReservationKeys"/> names the locks (see <see cref="IAggregateLock"/>) a request holds
+/// from before these totals are computed until it is recorded, so two requests in the same group are decided one
+/// after the other and the second one's total includes the first.
 /// </summary>
 public sealed partial class PolicyAggregateProvider(IAgentPermitStore store, IPolicySnapshotProvider snapshots)
 {
@@ -43,9 +47,11 @@ public sealed partial class PolicyAggregateProvider(IAgentPermitStore store, IPo
         {
             if (!string.IsNullOrEmpty(rule.ActionId) && !string.Equals(rule.ActionId, action.ActionId, StringComparison.OrdinalIgnoreCase))
                 continue;
+            // A rule for "any action" (no action id, or an empty one from the console) aggregates the current action.
+            var ruleActionId = string.IsNullOrEmpty(rule.ActionId) ? action.ActionId : rule.ActionId;
             foreach (var c in rule.Conditions)
                 if (c.Aggregate is not null)
-                    specs.TryAdd(c.Aggregate.Key(c.Field, rule.ActionId ?? action.ActionId), (c, rule.ActionId ?? action.ActionId));
+                    specs.TryAdd(c.Aggregate.Key(c.Field, ruleActionId), (c, ruleActionId));
         }
         if (specs.Count == 0) return null;
 
@@ -135,6 +141,50 @@ public sealed partial class PolicyAggregateProvider(IAgentPermitStore store, IPo
                 return JsonSerializer.SerializeToElement(sum);
             }
         }
+    }
+
+    /// <summary>
+    /// The limit locks this request must hold while it is checked and recorded: one for every aggregate in the
+    /// active snapshot that this request is checked against (its action's rules) or would count towards (a rule
+    /// on another action whose <c>actions</c> include this one), scoped to this request's own group values. A
+    /// group value the request doesn't carry means it can't share that total with anyone, so no lock is needed.
+    /// Empty when the snapshot has no aggregates, so the common case takes no lock at all.
+    /// </summary>
+    public IReadOnlyList<string> ReservationKeys(
+        ActionDefinition action, JsonElement parameters, string agentId, string? rootAgentId, string? initiatingUserId)
+    {
+        var keys = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var rule in snapshots.Current.Rules)
+        {
+            var checkedAgainst = string.IsNullOrEmpty(rule.ActionId)
+                                 || string.Equals(rule.ActionId, action.ActionId, StringComparison.OrdinalIgnoreCase);
+            foreach (var c in rule.Conditions)
+            {
+                if (c.Aggregate is not { } agg) continue;
+                var ruleActionId = string.IsNullOrEmpty(rule.ActionId) ? action.ActionId : rule.ActionId;
+                var countsTowards = agg.Actions is { Length: > 0 } acts
+                    && acts.Contains(action.ActionId, StringComparer.OrdinalIgnoreCase);
+                if (!checkedAgainst && !countsTowards) continue;
+
+                var group = new StringBuilder(agg.Key(c.Field, ruleActionId));
+                var shared = true;
+                foreach (var g in agg.GroupBy ?? Array.Empty<string>())
+                {
+                    var value = g switch
+                    {
+                        "agentId" => agentId,
+                        "rootAgentId" => rootAgentId,
+                        "initiatingUserId" => initiatingUserId,
+                        _ => ParamAsString(parameters, g)
+                    };
+                    if (value is null) { shared = false; break; }
+                    // Totals match group values case-insensitively, so the lock must too.
+                    group.Append('|').Append(g).Append('=').Append(value.ToLowerInvariant());
+                }
+                if (shared) keys.Add(group.ToString());
+            }
+        }
+        return keys.ToList();
     }
 
     /// <summary>ISO-8601 duration (PT1H, PT24H, P7D). Throws on nonsense so a bad rule fails at publish/evaluate, not silently.</summary>

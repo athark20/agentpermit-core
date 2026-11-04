@@ -48,7 +48,7 @@ public sealed class ConfigurablePolicyEngine(IPolicySnapshotProvider snapshots) 
         Dictionary<string, JsonElement> fields, PolicyEvaluationContext ctx, PolicyRule rule, PolicyCondition c)
     {
         if (c.Aggregate is null) return Lookup(fields, c.Field);
-        var key = c.Aggregate.Key(c.Field, rule.ActionId ?? ctx.Action.ActionId);
+        var key = c.Aggregate.Key(c.Field, string.IsNullOrEmpty(rule.ActionId) ? ctx.Action.ActionId : rule.ActionId);
         return ctx.Aggregates is not null && ctx.Aggregates.TryGetValue(key, out var v) ? v : null;
     }
 
