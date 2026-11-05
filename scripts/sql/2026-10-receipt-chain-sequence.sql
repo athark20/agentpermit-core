@@ -20,6 +20,9 @@ IF COL_LENGTH(N'dbo.ActionReceipt', N'Kind') IS NULL
     ALTER TABLE dbo.ActionReceipt ADD Kind NVARCHAR(16) NOT NULL CONSTRAINT DF_ActionReceipt_Kind DEFAULT N'EXECUTION';
 
 -- 2. Back-fill sequence numbers for existing receipts in their historical order (genesis = 0).
+-- Dynamic SQL: SQL Server compiles a whole batch before running it, so a statement that names the column added
+-- above in the same batch fails with "Invalid column name" unless it is compiled separately.
+EXEC sys.sp_executesql N'
 ;WITH ordered AS (
     SELECT ActionReceiptId,
            ROW_NUMBER() OVER (ORDER BY CreatedUtc ASC, ReceiptNumber ASC) - 1 AS Seq
@@ -29,6 +32,7 @@ IF COL_LENGTH(N'dbo.ActionReceipt', N'Kind') IS NULL
 UPDATE r SET r.SequenceNumber = o.Seq
 FROM dbo.ActionReceipt r
 JOIN ordered o ON o.ActionReceiptId = r.ActionReceiptId;
+';
 
 -- 3. Make the column mandatory now that every row has a value.
 IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.ActionReceipt') AND name = N'SequenceNumber' AND is_nullable = 1)
@@ -36,7 +40,7 @@ IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.ActionRec
 
 -- 4. Fork-proof constraints.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.ActionReceipt') AND name = N'UX_ActionReceipt_SequenceNumber')
-    CREATE UNIQUE INDEX UX_ActionReceipt_SequenceNumber ON dbo.ActionReceipt (SequenceNumber);
+    EXEC sys.sp_executesql N'CREATE UNIQUE INDEX UX_ActionReceipt_SequenceNumber ON dbo.ActionReceipt (SequenceNumber);';
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'dbo.ActionReceipt') AND name = N'UX_ActionReceipt_PreviousReceiptHash')
     CREATE UNIQUE INDEX UX_ActionReceipt_PreviousReceiptHash ON dbo.ActionReceipt (PreviousReceiptHash)
