@@ -312,6 +312,13 @@ builder.Services.AddScoped<IActionAdapter>(sp => sp.GetRequiredService<Delegated
 // TARGET_NOT_CONFIGURED at execute time) so the adapter always resolves.
 var businessSqlConn = builder.Configuration["Persistence:BusinessSqlConnectionString"];
 builder.Services.AddScoped<IActionAdapter>(sp => new SqlFinanceAdapter(businessSqlConn, sp.GetRequiredService<ILogger<SqlFinanceAdapter>>()));
+// Microsoft Graph (SharePoint / OneDrive sharing links). Registered even when the Graph section is empty
+// (returns TARGET_NOT_CONFIGURED at execute time) so the GRAPH adapter type always resolves.
+builder.Services.AddSingleton(builder.Configuration.GetSection("Graph").Get<GraphOptions>() ?? new GraphOptions());
+builder.Services.AddHttpClient<GraphShareAdapter>();
+builder.Services.AddScoped<IActionAdapter>(sp => sp.GetRequiredService<GraphShareAdapter>());
+// Sandbox: target systems with no real downstream yet execute here (recorded, receipted, nothing called).
+builder.Services.AddScoped<IActionAdapter, SandboxActionAdapter>();
 builder.Services.AddScoped<IActionAdapterResolver, ActionAdapterResolver>();
 
 // --- Core services ---
