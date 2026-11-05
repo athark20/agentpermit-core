@@ -80,7 +80,7 @@ public sealed class SandboxAndGraphAdapterTests
         Assert.Equal(AdapterExecutionStatus.Succeeded, result.Status);
         Assert.Equal("LINK-1", result.TargetResourceId);
         Assert.EndsWith("/drives/DRIVE-A/items/ITEM-7/createLink", graph.CreateLinkUri);
-        Assert.Equal("edit", graph.CreateLinkBody!.GetProperty("type").GetString());
+        Assert.Equal("edit", graph.CreateLinkBody!.Value.GetProperty("type").GetString());
         Assert.Equal("organization", graph.CreateLinkBody.Value.GetProperty("scope").GetString());
         Assert.Equal("Bearer tok-1", graph.CreateLinkAuthorization);
     }
