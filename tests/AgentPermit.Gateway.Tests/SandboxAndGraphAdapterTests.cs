@@ -94,7 +94,7 @@ public sealed class SandboxAndGraphAdapterTests
         var result = await adapter.ExecuteAsync(Req("Document.Share", "SHAREPOINT", new { fileName = "Q3 plan.docx" }), CancellationToken.None);
 
         Assert.Equal(AdapterExecutionStatus.Succeeded, result.Status);
-        Assert.Contains("/drives/DEFAULT-DRIVE/root:/Q3%20plan.docx?$select=id", graph.LookupUris);
+        Assert.Contains(graph.LookupUris, u => u.EndsWith("/drives/DEFAULT-DRIVE/root:/Q3%20plan.docx?$select=id", StringComparison.Ordinal));
         Assert.EndsWith("/drives/DEFAULT-DRIVE/items/ITEM-BY-PATH/createLink", graph.CreateLinkUri);
     }
 
